@@ -1,0 +1,9 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+# The container's CMD (python -m tgbot.run_bot) is the start command.
+# This is a long-polling worker with no HTTP port, so no healthcheck is configured.
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
