@@ -1,0 +1,11 @@
+.env
+.env.*
+.venv/
+data/
+.git/
+__pycache__/
+*.pyc
+tests/
+strategy_rules.md
+Dockerfile
+.dockerignore
