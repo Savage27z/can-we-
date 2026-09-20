@@ -36,3 +36,9 @@ def pip_size(instrument: str) -> float:
 def stop_buffer(instrument: str) -> float:
     pips = STOP_BUFFER_PIPS_JPY if instrument.endswith("_JPY") else STOP_BUFFER_PIPS_STANDARD
     return pips * pip_size(instrument)
+
+
+def stop_price(instrument: str, direction: str, sweep_extreme: float) -> float:
+    """§3 / §6.3: the sweep extreme plus the buffer, on the side that loses the trade."""
+    buffer = stop_buffer(instrument)
+    return sweep_extreme - buffer if direction == "bullish" else sweep_extreme + buffer

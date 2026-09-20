@@ -82,8 +82,10 @@ def _find_fvg(market: MarketData, sweep_index: int, required_direction: str) -> 
     return None, True
 
 
-def _select_target(market: MarketData, direction: str, sweep_index: int,
-                    entry_price: float, h4_ref_index: int) -> Optional[LiquidityLevel]:
+def select_target(market: MarketData, direction: str, sweep_index: int,
+                 entry_price: float, h4_ref_index: int) -> Optional[LiquidityLevel]:
+    """§6.1. Public because the live plan asks the same question ("what would the
+    target be at this entry?") before a trade has confirmed."""
     target_kind = "high" if direction == "bullish" else "low"
     candidates = [
         lvl for lvl in market.levels
@@ -168,11 +170,10 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int) -> Setu
     confirm_time = h1_time.iloc[confirmed_index] + pd.Timedelta(hours=1)
     h1_candles_to_confirm = confirmed_index - j0
 
-    buffer = rules.stop_buffer(market.pair)
-    stop_price = sweep_extreme - buffer if direction == "bullish" else sweep_extreme + buffer
+    stop_price = rules.stop_price(market.pair, direction, sweep_extreme)
 
     h4_ref_index = xtf.h4_index_fully_closed_by(h4_time, confirm_time)
-    target_level = _select_target(market, direction, sweep_index, entry_price, h4_ref_index)
+    target_level = select_target(market, direction, sweep_index, entry_price, h4_ref_index)
     if target_level is None:
         return SetupResult(**base, outcome="no_target", fvg=fvg, confirm_index=confirmed_index,
                             confirm_time=confirm_time, entry_price=entry_price, stop_price=stop_price,
