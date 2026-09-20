@@ -27,7 +27,13 @@ def make_service(narrate, clock=None):
         calls["compute"] += 1
         return make_state([setup("live_trade")])
 
-    return ReportService(refresh, compute, narrate, clock or Clock()), calls
+    calls["chart"] = 0
+
+    def chart(state):
+        calls["chart"] += 1
+        return b"PNG-BYTES"
+
+    return ReportService(refresh, compute, narrate, clock or Clock(), chart), calls
 
 
 class ReportServiceTests(unittest.TestCase):
@@ -37,7 +43,7 @@ class ReportServiceTests(unittest.TestCase):
         self.assertEqual(service.get_report("EUR_USD"), "NARRATED")
         clock.now += config.REPORT_CACHE_TTL - timedelta(seconds=1)
         service.get_report("EUR_USD")
-        self.assertEqual(calls, {"refresh": 1, "compute": 1})
+        self.assertEqual((calls["refresh"], calls["compute"]), (1, 1))
 
     def test_report_is_rebuilt_after_the_ttl(self):
         clock = Clock()
@@ -60,6 +66,7 @@ class ReportServiceTests(unittest.TestCase):
         service = ReportService(
             refresh=lambda pair: (_ for _ in ()).throw(RuntimeError("oanda down")),
             compute=lambda pair: make_state(), narrate=lambda s: "x", clock=Clock(),
+            chart=lambda s: None,
         )
         with self.assertRaises(RuntimeError):
             service.get_report("EUR_USD")
@@ -101,6 +108,57 @@ class NarrationFailureTests(unittest.TestCase):
         self.assertIn("plain summary", service.get_report("EUR_USD"))
 
 
+class AnalysisChartTests(unittest.TestCase):
+    def test_analysis_carries_the_text_and_the_chart(self):
+        service, _ = make_service(lambda s: "NARRATED")
+        analysis = service.get_analysis("EUR_USD")
+        self.assertEqual(analysis.text, "NARRATED")
+        self.assertEqual(analysis.chart, b"PNG-BYTES")
+
+    def test_text_and_chart_are_cached_together(self):
+        clock = Clock()
+        service, calls = make_service(lambda s: "NARRATED", clock)
+        service.get_analysis("EUR_USD")
+        clock.now += config.REPORT_CACHE_TTL - timedelta(seconds=1)
+        service.get_analysis("EUR_USD")
+        self.assertEqual((calls["refresh"], calls["chart"]), (1, 1))
+
+    def test_a_chart_failure_costs_only_the_picture(self):
+        def broken_chart(state):
+            raise RuntimeError("font cache unwritable")
+
+        service = ReportService(lambda p: None, lambda p: make_state(), lambda s: "NARRATED",
+                                Clock(), broken_chart)
+        analysis = service.get_analysis("EUR_USD")
+        self.assertEqual(analysis.text, "NARRATED")
+        self.assertIsNone(analysis.chart)
+
+    def test_the_chart_is_drawn_from_the_same_state_as_the_report(self):
+        seen = {}
+        state = make_state()
+
+        def narrate(s):
+            seen["narrated"] = s
+            return "x"
+
+        def chart(s):
+            seen["charted"] = s
+            return b"PNG"
+
+        service = ReportService(lambda p: None, lambda p: state, narrate, Clock(), chart)
+        service.get_analysis("EUR_USD")
+        self.assertIs(seen["narrated"], seen["charted"])
+
+    def test_get_report_still_returns_just_the_text(self):
+        service, _ = make_service(lambda s: "NARRATED")
+        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")
+
+    def test_chart_for_is_safe_to_call_directly_for_alerts(self):
+        service = ReportService(lambda p: None, lambda p: make_state(), lambda s: "x",
+                                Clock(), lambda s: (_ for _ in ()).throw(ValueError("no candles")))
+        self.assertIsNone(service.chart_for(make_state()))
+
+
 class RefreshSerialisationTests(unittest.TestCase):
     def test_concurrent_fresh_state_calls_never_refresh_the_same_pair_at_once(self):
         import threading
@@ -117,7 +175,8 @@ class RefreshSerialisationTests(unittest.TestCase):
             with guard:
                 active["now"] -= 1
 
-        service = ReportService(refresh, lambda pair: make_state(), lambda s: "x", Clock())
+        service = ReportService(refresh, lambda pair: make_state(), lambda s: "x", Clock(),
+                                lambda s: None)
         threads = [threading.Thread(target=service.fresh_state, args=("EUR_USD",)) for _ in range(4)]
         for t in threads:
             t.start()

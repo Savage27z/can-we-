@@ -113,8 +113,9 @@ class AlertLogTests(unittest.TestCase):
         self.assertEqual(self.log.load(), ["old", "new"])
 
 
-def make_bot(send=None, get_me=None):
-    return SimpleNamespace(send_message=send or AsyncMock(), get_me=get_me or AsyncMock())
+def make_bot(send=None, get_me=None, send_photo=None):
+    return SimpleNamespace(send_message=send or AsyncMock(), get_me=get_me or AsyncMock(),
+                           send_photo=send_photo or AsyncMock())
 
 
 def make_context(service, alert_log, bot, bot_data=None):
@@ -130,8 +131,10 @@ class AlertJobTests(unittest.TestCase):
         self.log = alerts.AlertLog(self.tmp / "alert_state.json")
         self.state = make_state([setup("live_trade")])
         self.render_text = "REPORT"
+        self.chart = None
         self.service = SimpleNamespace(
-            fresh_state=lambda pair: self.state, render=lambda state: self.render_text)
+            fresh_state=lambda pair: self.state, render=lambda state: self.render_text,
+            chart_for=lambda state: self.chart)
         self.bot_data = {}
         for patcher in (
             patch.object(alerts, "_utcnow", return_value=NOW),
@@ -223,6 +226,40 @@ class AlertJobTests(unittest.TestCase):
             asyncio.run(both())
         self.assertEqual(sorted(sent), [111, 222])
 
+    def test_the_chart_is_sent_before_the_alert_text(self):
+        self.chart = b"PNG"
+        order = []
+
+        async def photo(chat_id, photo):
+            order.append("photo")
+
+        async def text(chat_id, text):
+            order.append("text")
+
+        self.run_job(make_bot(text, send_photo=photo), chat_ids="111")
+        self.assertEqual(order, ["photo", "text"])
+
+    def test_no_photo_is_sent_when_there_is_no_chart(self):
+        send_photo = AsyncMock()
+        self.run_job(make_bot(send_photo=send_photo), chat_ids="111")
+        send_photo.assert_not_awaited()
+
+    def test_a_failed_chart_never_blocks_the_alert_text_or_its_record(self):
+        self.chart = b"PNG"
+        send = AsyncMock()
+        self.run_job(make_bot(send, send_photo=AsyncMock(side_effect=RuntimeError("upload"))),
+                     chat_ids="111")
+        send.assert_awaited_once()
+        self.assertEqual(len(self.log.load()), 1)
+
+    def test_a_chat_that_blocked_the_bot_is_not_retried_via_the_photo_either(self):
+        self.chart = b"PNG"
+        send = AsyncMock()
+        self.run_job(make_bot(send, send_photo=AsyncMock(side_effect=Forbidden("blocked"))),
+                     chat_ids="111")
+        send.assert_not_awaited()
+        self.assertEqual(len(self.log.load()), 1)  # recorded: no endless retries
+
     def test_no_allowed_chats_means_no_work(self):
         send = AsyncMock()
         self.run_job(make_bot(send), chat_ids="")
@@ -254,7 +291,8 @@ class HealthTests(unittest.TestCase):
                 raise RuntimeError("OANDA down")
             return make_state()
 
-        self.service = SimpleNamespace(fresh_state=fresh_state, render=lambda s: "x")
+        self.service = SimpleNamespace(fresh_state=fresh_state, render=lambda s: "x",
+                                       chart_for=lambda s: None)
         patcher = patch.object(alerts, "_utcnow", return_value=NOW)
         patcher.start()
         self.addCleanup(patcher.stop)

@@ -131,9 +131,18 @@ class AlertLog:
                           "in memory until restart")
 
 
-async def _send(bot, chat_id: int, text: str) -> bool:
+async def _send(bot, chat_id: int, text: str, photo: Optional[bytes] = None) -> bool:
     """True once the chat needs no further attempts: delivered, or permanently
-    unreachable (it blocked the bot). False means retry on the next cycle."""
+    unreachable (it blocked the bot). False means retry on the next cycle.
+    The photo is best-effort: failing to send it never blocks the text."""
+    if photo:
+        try:
+            await bot.send_photo(chat_id=chat_id, photo=photo)
+        except Forbidden:
+            log.warning("chat %s has blocked the bot; not retrying", chat_id)
+            return True
+        except Exception:
+            log.exception("could not send the alert chart to chat %s; sending text only", chat_id)
     for chunk in split_message(text):
         try:
             await bot.send_message(chat_id=chat_id, text=chunk)
@@ -179,6 +188,7 @@ async def _run_cycle(context, chat_ids: set[int]) -> Optional[str]:
         notified = set(alert_log.load())
         now = _utcnow()
         report = None
+        chart = None
         for chat_id in sorted(chat_ids):
             new = select_new_alerts(state, notified, now, chat_id)
             if not new:
@@ -186,7 +196,8 @@ async def _run_cycle(context, chat_ids: set[int]) -> Optional[str]:
             if report is None:
                 rendered = await asyncio.to_thread(service.render, state)
                 report = "🚨 New live setup\n\n" + rendered
-            if await _send(context.bot, chat_id, report):
+                chart = await asyncio.to_thread(service.chart_for, state)
+            if await _send(context.bot, chat_id, report, chart):
                 alert_log.add([delivery_key(state.pair, s, chat_id) for s in new])
             else:
                 error = f"delivery to chat {chat_id} failed"

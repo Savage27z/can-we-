@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
+from live.chart import load_candles, render_chart
 from live.refresh import refresh_pair
 from live.state import LiveState, compute_current_state
 from narration.generate import narrate_state
@@ -23,9 +24,19 @@ def _refresh_live_history(pair: str) -> None:
     refresh_pair(pair, years=config.LIVE_HISTORY_YEARS)
 
 
+def _default_chart(state: LiveState) -> Optional[bytes]:
+    return render_chart(load_candles(state.pair), state)
+
+
+@dataclass
+class Analysis:
+    text: str
+    chart: Optional[bytes]  # PNG, or None when the chart couldn't be drawn
+
+
 @dataclass
 class _CachedReport:
-    text: str
+    analysis: Analysis
     built_at: datetime
     ttl: timedelta
 
@@ -60,11 +71,13 @@ class ReportService:
         compute: Callable[[str], LiveState] = compute_current_state,
         narrate: Callable[[LiveState], str] = narrate_state,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        chart: Callable[[LiveState], Optional[bytes]] = _default_chart,
     ):
         self._refresh = refresh
         self._compute = compute
         self._narrate = narrate
         self._clock = clock
+        self._chart = chart
         self._cache: dict[str, _CachedReport] = {}
         # Re-entrant: get_report holds the pair's lock and calls fresh_state, which
         # takes it again on the same thread.
@@ -99,13 +112,27 @@ class ReportService:
     def render(self, state: LiveState) -> str:
         return self._render(state)[0]
 
-    def get_report(self, pair: str) -> str:
+    def chart_for(self, state: LiveState) -> Optional[bytes]:
+        """The chart is decoration: any failure drawing it (a missing font, bad
+        data) must cost the reader the picture only, never the report."""
+        try:
+            return self._chart(state)
+        except Exception as err:
+            log.warning("chart failed for %s, sending text only: %s", state.pair, err)
+            return None
+
+    def get_analysis(self, pair: str) -> Analysis:
         with self._lock_for(pair):
             cached: Optional[_CachedReport] = self._cache.get(pair)
             now = self._clock()
             if cached is not None and now - cached.built_at < cached.ttl:
-                return cached.text
-            text, narrated = self._render(self.fresh_state(pair))
+                return cached.analysis
+            state = self.fresh_state(pair)
+            text, narrated = self._render(state)
+            analysis = Analysis(text=text, chart=self.chart_for(state))
             ttl = config.REPORT_CACHE_TTL if narrated else config.FALLBACK_CACHE_TTL
-            self._cache[pair] = _CachedReport(text=text, built_at=self._clock(), ttl=ttl)
-            return text
+            self._cache[pair] = _CachedReport(analysis=analysis, built_at=self._clock(), ttl=ttl)
+            return analysis
+
+    def get_report(self, pair: str) -> str:
+        return self.get_analysis(pair).text

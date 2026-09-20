@@ -119,7 +119,7 @@ async def analysis(update, context) -> None:
 
     service: ReportService = context.application.bot_data["service"]
     try:
-        text = await asyncio.to_thread(service.get_report, pair)
+        result = await asyncio.to_thread(service.get_analysis, pair)
     except Exception:
         log.exception("analysis failed for %s", pair)
         await message.reply_text(
@@ -128,5 +128,11 @@ async def analysis(update, context) -> None:
         )
         return
 
-    for chunk in split_message(text):
+    if result.chart:
+        try:
+            await message.reply_photo(photo=result.chart)
+        except Exception:
+            # The report matters more than its picture: carry on with the text.
+            log.exception("could not send the chart for %s", pair)
+    for chunk in split_message(result.text):
         await message.reply_text(chunk)

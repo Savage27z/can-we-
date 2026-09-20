@@ -6,13 +6,15 @@ from unittest.mock import AsyncMock, patch
 from tgbot import handlers
 from tgbot.messages import split_message
 from tgbot.pairs import normalize_pair
+from tgbot.service import Analysis
 
 
 def make_update(chat_id=111, edited=False):
     """Mimics python-telegram-bot's Update. For a normal message `message` and
     `effective_message` are the same object; for an EDITED message Telegram sends
     `edited_message`, so `update.message` is None while `effective_message` is set."""
-    message = SimpleNamespace(reply_text=AsyncMock(), reply_html=AsyncMock())
+    message = SimpleNamespace(reply_text=AsyncMock(), reply_html=AsyncMock(),
+                              reply_photo=AsyncMock())
     return SimpleNamespace(
         effective_chat=SimpleNamespace(id=chat_id),
         effective_message=message,
@@ -20,8 +22,9 @@ def make_update(chat_id=111, edited=False):
     )
 
 
-def make_context(args=None, get_report=None, bot_data=None):
-    service = SimpleNamespace(get_report=get_report or (lambda pair: f"REPORT for {pair}"))
+def make_context(args=None, get_report=None, bot_data=None, chart=None):
+    report = get_report or (lambda pair: f"REPORT for {pair}")
+    service = SimpleNamespace(get_analysis=lambda pair: Analysis(text=report(pair), chart=chart))
     app = SimpleNamespace(bot_data={"service": service, **(bot_data or {})})
     return SimpleNamespace(args=args or [], application=app)
 
@@ -169,6 +172,34 @@ class AnalysisTests(unittest.TestCase):
         run(handlers.analysis(update, make_context(get_report=boom)))
         self.assertIn("Couldn't build the report", replies(update)[0])
         self.assertNotIn("secret", replies(update)[0])
+
+
+class ChartDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict("os.environ", {"TELEGRAM_ALLOWED_CHAT_IDS": "111"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_chart_is_sent_before_the_text(self):
+        order = []
+        update = make_update()
+        update.effective_message.reply_photo.side_effect = lambda **kw: order.append("photo")
+        update.effective_message.reply_text.side_effect = lambda text: order.append("text")
+        run(handlers.analysis(update, make_context(chart=b"PNG")))
+        self.assertEqual(order, ["photo", "text"])
+        update.effective_message.reply_photo.assert_awaited_once_with(photo=b"PNG")
+
+    def test_no_photo_is_sent_when_there_is_no_chart(self):
+        update = make_update()
+        run(handlers.analysis(update, make_context(chart=None)))
+        update.effective_message.reply_photo.assert_not_awaited()
+        self.assertEqual(replies(update), ["REPORT for EUR_USD"])
+
+    def test_a_failed_photo_upload_still_delivers_the_text(self):
+        update = make_update()
+        update.effective_message.reply_photo.side_effect = RuntimeError("upload failed")
+        run(handlers.analysis(update, make_context(chart=b"PNG")))
+        self.assertEqual(replies(update), ["REPORT for EUR_USD"])
 
 
 class StatusTests(unittest.TestCase):
