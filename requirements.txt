@@ -4,3 +4,4 @@ numpy>=1.26,<3
 pyarrow>=16,<27
 python-dotenv>=1.0,<2
 python-telegram-bot[job-queue]>=21,<24
+matplotlib>=3.9,<4
