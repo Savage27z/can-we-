@@ -1,9 +1,12 @@
+import logging
 import os
 from datetime import timedelta
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
@@ -31,13 +34,34 @@ ALERT_MINUTE_PAST_HOUR = 5
 # when it confirmed) — it's still visible via /analysis.
 MAX_ALERT_AGE = timedelta(hours=3)
 
+# Alerts are skipped when the newest candle is older than this: the trade could have
+# been invalidated since, so pushing it as live would be wrong.
+MAX_DATA_AGE = timedelta(hours=2)
+
+# A plain-summary report (narration failed) is cached only briefly, so a transient
+# DeepSeek error is retried soon instead of being served for the full cache TTL.
+FALLBACK_CACHE_TTL = timedelta(seconds=60)
+
+# After this many consecutive failing hourly checks, the allowed chats get one warning.
+ALERT_FAILURES_BEFORE_WARNING = 3
+
+# APScheduler skips a run delayed by more than its grace period (default: 1 second).
+ALERT_MISFIRE_GRACE_SECONDS = 600
+
 
 def parse_allowed_chat_ids(raw: str | None) -> set[int]:
+    """Ignores entries that aren't integers (e.g. a typo like '@me') instead of
+    raising: a bad value crashed startup, and a crash loop exhausts the restart
+    policy and takes the whole bot down. Ignoring fails closed for that entry."""
     ids = set()
     for part in (raw or "").split(","):
         part = part.strip()
-        if part:
+        if not part:
+            continue
+        try:
             ids.add(int(part))
+        except ValueError:
+            log.warning("ignoring invalid TELEGRAM_ALLOWED_CHAT_IDS entry %r", part)
     return ids
 
 
