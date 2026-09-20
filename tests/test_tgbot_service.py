@@ -67,6 +67,84 @@ class ReportServiceTests(unittest.TestCase):
             service.get_report("EUR_USD")
 
 
+class NarrationFailureTests(unittest.TestCase):
+    def test_a_fallback_report_is_cached_only_briefly_so_narration_is_retried(self):
+        clock = Clock()
+        outcomes = ["fail", "ok"]
+
+        def narrate(state):
+            if outcomes.pop(0) == "fail":
+                raise DeepSeekAPIError("transient")
+            return "NARRATED"
+
+        service, calls = make_service(narrate, clock)
+        self.assertIn("plain summary", service.get_report("EUR_USD"))
+        clock.now += config.FALLBACK_CACHE_TTL - timedelta(seconds=1)
+        self.assertIn("plain summary", service.get_report("EUR_USD"))
+        self.assertEqual(calls["refresh"], 1)  # still cached
+
+        clock.now += timedelta(seconds=2)  # past the short fallback TTL
+        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")
+        self.assertEqual(calls["refresh"], 2)
+
+    def test_none_or_empty_narration_falls_back_instead_of_being_sent_or_cached(self):
+        for bad in (None, "", "   \n"):
+            service, _ = make_service(lambda s, bad=bad: bad)
+            text = service.get_report("EUR_USD")
+            self.assertIn("plain summary", text, repr(bad))
+
+    def test_unexpected_narration_exceptions_also_fall_back(self):
+        def broken(state):
+            raise KeyError("model changed its response")
+
+        service, _ = make_service(broken)
+        self.assertIn("plain summary", service.get_report("EUR_USD"))
+
+
+class RefreshSerialisationTests(unittest.TestCase):
+    def test_concurrent_fresh_state_calls_never_refresh_the_same_pair_at_once(self):
+        import threading
+        import time
+
+        active = {"now": 0, "max": 0}
+        guard = threading.Lock()
+
+        def refresh(pair):
+            with guard:
+                active["now"] += 1
+                active["max"] = max(active["max"], active["now"])
+            time.sleep(0.05)
+            with guard:
+                active["now"] -= 1
+
+        service = ReportService(refresh, lambda pair: make_state(), lambda s: "x", Clock())
+        threads = [threading.Thread(target=service.fresh_state, args=("EUR_USD",)) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(active["max"], 1)
+
+    def test_get_report_calling_fresh_state_does_not_deadlock(self):
+        service, calls = make_service(lambda s: "NARRATED")
+        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")  # would hang if not re-entrant
+        self.assertEqual(calls["refresh"], 1)
+
+
+class BuildApplicationTests(unittest.TestCase):
+    def test_registers_every_command_and_both_scheduled_jobs(self):
+        from tgbot.run_bot import build_application
+
+        app = build_application("123456:TEST-TOKEN")
+        commands = set()
+        for handler in app.handlers[0]:
+            commands.update(getattr(handler, "commands", ()))
+        self.assertEqual(commands, {"start", "help", "status", "analysis", "analyze"})
+        self.assertEqual(len(app.job_queue.jobs()), 2)  # startup check + hourly check
+        self.assertIn("service", app.bot_data)
+        self.assertIn("alert_log", app.bot_data)
+
+
 class FallbackTextTests(unittest.TestCase):
     def test_no_setup(self):
         self.assertIn("No active setup", fallback_text(make_state()))

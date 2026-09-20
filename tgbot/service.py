@@ -7,14 +7,11 @@ lost just because the formatting layer failed.
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
-
-import requests
 
 from live.refresh import refresh_pair
 from live.state import LiveState, compute_current_state
-from narration.deepseek_client import DeepSeekAPIError
 from narration.generate import narrate_state
 
 from . import config
@@ -30,6 +27,7 @@ def _refresh_live_history(pair: str) -> None:
 class _CachedReport:
     text: str
     built_at: datetime
+    ttl: timedelta
 
 
 def fallback_text(state: LiveState) -> str:
@@ -68,30 +66,46 @@ class ReportService:
         self._narrate = narrate
         self._clock = clock
         self._cache: dict[str, _CachedReport] = {}
-        self._locks: dict[str, threading.Lock] = {}
+        # Re-entrant: get_report holds the pair's lock and calls fresh_state, which
+        # takes it again on the same thread.
+        self._locks: dict[str, threading.RLock] = {}
         self._locks_guard = threading.Lock()
 
-    def _lock_for(self, pair: str) -> threading.Lock:
+    def _lock_for(self, pair: str) -> threading.RLock:
         with self._locks_guard:
-            return self._locks.setdefault(pair, threading.Lock())
+            return self._locks.setdefault(pair, threading.RLock())
 
     def fresh_state(self, pair: str) -> LiveState:
-        self._refresh(pair)
-        return self._compute(pair)
+        # Serialised per pair: the hourly alert job and /analysis both refresh the
+        # same parquet files, and two concurrent read-merge-write cycles can lose
+        # candles (a stale writer landing last replaces newer data).
+        with self._lock_for(pair):
+            self._refresh(pair)
+            return self._compute(pair)
+
+    def _render(self, state: LiveState) -> tuple[str, bool]:
+        """Returns (text, narrated). Anything short of usable narrated text —
+        an exception, None, an empty string — degrades to the plain summary."""
+        try:
+            text = self._narrate(state)
+            if isinstance(text, str) and text.strip():
+                return text, True
+            log.warning("narration returned no usable text for %s; sending plain summary",
+                        state.pair)
+        except Exception as err:
+            log.warning("narration failed for %s, sending plain summary: %s", state.pair, err)
+        return fallback_text(state), False
 
     def render(self, state: LiveState) -> str:
-        try:
-            return self._narrate(state)
-        except (DeepSeekAPIError, RuntimeError, requests.RequestException) as err:
-            log.warning("narration failed for %s, sending plain summary: %s", state.pair, err)
-            return fallback_text(state)
+        return self._render(state)[0]
 
     def get_report(self, pair: str) -> str:
         with self._lock_for(pair):
             cached: Optional[_CachedReport] = self._cache.get(pair)
             now = self._clock()
-            if cached is not None and now - cached.built_at < config.REPORT_CACHE_TTL:
+            if cached is not None and now - cached.built_at < cached.ttl:
                 return cached.text
-            text = self.render(self.fresh_state(pair))
-            self._cache[pair] = _CachedReport(text=text, built_at=self._clock())
+            text, narrated = self._render(self.fresh_state(pair))
+            ttl = config.REPORT_CACHE_TTL if narrated else config.FALLBACK_CACHE_TTL
+            self._cache[pair] = _CachedReport(text=text, built_at=self._clock(), ttl=ttl)
             return text
