@@ -6,6 +6,7 @@ import unittest
 
 import pandas as pd
 
+from backtest import rules
 from backtest.fractals import build_levels, find_swings
 from backtest.sessions import in_session_mask
 from backtest.setup import MarketData
@@ -94,6 +95,36 @@ class LiveStateTests(unittest.TestCase):
         self.assertIsNone(setup.stop_price)
         self.assertIsNone(setup.target_price)
         self.assertIsNone(setup.rr)
+
+    def test_every_setup_carries_a_plan_built_from_the_engines_own_numbers(self):
+        state = compute_state_from_market(self.market)
+        plan = state.active_setups[0].plan
+        self.assertEqual(plan.side, "BUY")
+        self.assertAlmostEqual(plan.stop, rules.stop_price("EUR_USD", "bullish", 1.0795))
+        self.assertAlmostEqual(plan.invalidation, 1.0795)
+        self.assertAlmostEqual(plan.entry, 1.0812)           # the trigger level
+        self.assertTrue(plan.target_provisional)
+        # The 1.0900 swing high is the nearest unmitigated one above the trigger.
+        self.assertAlmostEqual(plan.target, 1.0900)
+        self.assertAlmostEqual(plan.rr, (1.0900 - 1.0812) / (1.0812 - 1.0790))
+        self.assertIs(type(plan.stop), float)                # plain floats, not numpy scalars
+
+    def test_the_forecast_target_is_the_one_the_engine_picks_once_it_confirms(self):
+        planned = compute_state_from_market(self.market).active_setups[0].plan
+
+        confirming = pd.DataFrame({
+            "time": [pd.Timestamp("2024-01-04 08:00", tz="UTC")],   # an in-session H1 candle
+            "open": [1.0812], "high": [1.0818], "low": [1.0810], "close": [1.0815], "volume": [1],
+        })
+        self.market.h1 = pd.concat([self.market.h1, confirming], ignore_index=True)
+        self.market.h1_session = in_session_mask(self.market.h1["time"])
+
+        live = compute_state_from_market(self.market).active_setups[0]
+        self.assertEqual(live.status, "live_trade")
+        self.assertAlmostEqual(live.target_price, planned.target)
+        self.assertAlmostEqual(live.plan.stop, planned.stop)
+        self.assertFalse(live.plan.target_provisional)
+        self.assertAlmostEqual(live.plan.entry, 1.0815)      # the confirming close, not the trigger
 
     def test_to_dict_is_json_serializable(self):
         import json

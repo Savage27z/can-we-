@@ -15,8 +15,10 @@ import pandas as pd
 
 from backtest import bias, rules, xtf
 from backtest.engine import find_sweep_events, load_market_data
-from backtest.setup import MarketData, OUTCOMES_PENDING, SetupResult, evaluate_setup
+from backtest.setup import MarketData, OUTCOMES_PENDING, SetupResult, evaluate_setup, select_target
 from news.filter import NewsStatus, check_news
+
+from .plan import TradePlan, plan_for
 
 _LIVE_STATUS_LABELS = {
     "pending_fvg": "pending_fvg",
@@ -47,6 +49,7 @@ class ActiveSetup:
     h1_candles_to_confirm: Optional[int]
     confirm_time: Optional[str]  # close time of the confirming H1 candle (ISO), None until confirmed
     fvg_start_time: Optional[str] = None  # open time of the FVG's first candle (ISO); chart placement only
+    plan: Optional[TradePlan] = None      # rendered by live.plan, never by the narration model
 
 
 @dataclass
@@ -82,6 +85,20 @@ def _to_active_setup(result: SetupResult, h4_times: pd.Series) -> ActiveSetup:
         fvg_start_time=(h4_times.iloc[result.fvg.mid_index - 1].isoformat()
                         if result.fvg else None),
     )
+
+
+def _provisional_target(market: MarketData, result: SetupResult, as_of: pd.Timestamp) -> Optional[float]:
+    """What §6.1 would pick if the setup confirmed right now, entering at the trigger
+    level. The real target is chosen at the confirming candle's close, so this is
+    a forecast; the plan labels it as such."""
+    if result.fvg is None:
+        return None
+    h4_ref_index = xtf.h4_index_fully_closed_by(market.h4["time"], as_of)
+    if h4_ref_index < 0:
+        return None
+    level = select_target(market, result.direction, result.sweep_index,
+                          result.fvg.confirmation_level, h4_ref_index)
+    return level.level if level is not None else None
 
 
 def _liquidity_map(market: MarketData, as_of: pd.Timestamp, current_price: float):
@@ -124,12 +141,20 @@ def compute_state_from_market(market: MarketData, news: Optional[NewsStatus] = N
     current_bias = bias.bias_asof(market.daily, as_of)
     buy_side, sell_side = _liquidity_map(market, as_of, current_price)
 
+    setups = []
+    for result in active:
+        setup = _to_active_setup(result, market.h4["time"])
+        provisional = (_provisional_target(market, result, as_of)
+                       if setup.status == "pending_confirmation" else None)
+        setup.plan = plan_for(market.pair, setup, provisional)
+        setups.append(setup)
+
     return LiveState(
         pair=market.pair,
         as_of=as_of.isoformat(),
         current_price=current_price,
         daily_bias=current_bias,
-        active_setups=[_to_active_setup(r, market.h4["time"]) for r in active],
+        active_setups=setups,
         liquidity_buy_side=buy_side,
         liquidity_sell_side=sell_side,
         news=news if news is not None else NewsStatus.not_checked(),
