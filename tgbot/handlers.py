@@ -2,16 +2,18 @@ import asyncio
 import logging
 
 from . import config
+from .messages import split_message
 from .pairs import normalize_pair
 from .service import ReportService
 
 log = logging.getLogger(__name__)
 
-TELEGRAM_MESSAGE_LIMIT = 4000  # Telegram's hard cap is 4096 characters
+MAX_ECHOED_INPUT = 40  # keeps the "couldn't read that" reply far below Telegram's limit
 
 HELP_TEXT = (
     "Commands:\n"
     "/analysis [pair] — structural read (default EUR_USD)\n"
+    "/status — health of the hourly alert checks\n"
     "/help — this message\n\n"
     f"Enabled pairs: {', '.join(config.LIVE_PAIRS)}"
 )
@@ -39,66 +41,77 @@ def start_text() -> str:
     )
 
 
-def split_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
-    chunks, current = [], ""
-    for line in text.split("\n"):
-        while len(line) > limit:  # a single oversized line: hard-split it
-            if current:
-                chunks.append(current)
-                current = ""
-            chunks.append(line[:limit])
-            line = line[limit:]
-        candidate = f"{current}\n{line}" if current else line
-        if len(candidate) > limit:
-            chunks.append(current)
-            current = line
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks
+def status_text(health: dict | None) -> str:
+    if not health or not health.get("last_cycle"):
+        return "No alert check has completed yet since the bot started."
+    lines = [f"Last alert check: {health['last_cycle']}"]
+    if health["consecutive_failures"]:
+        lines.append(
+            f"⚠️ {health['consecutive_failures']} consecutive failing check(s). "
+            f"Last error: {health['last_error']}"
+        )
+    else:
+        lines.append("✅ Healthy — the last check completed without errors.")
+    if health.get("last_ok"):
+        lines.append(f"Last fully successful check: {health['last_ok']}")
+    return "\n".join(lines)
 
+
+# Handlers use `update.effective_message`, not `update.message`: Telegram delivers an
+# EDITED command as `edited_message`, for which `update.message` is None. Using
+# `.message` made an edited /analysis run the paid work and then crash on the reply.
 
 async def _authorized(update) -> bool:
     chat_id = update.effective_chat.id
     allowed = config.allowed_chat_ids()
     if chat_id in allowed:
         return True
+    message = update.effective_message
     if not allowed:
-        await update.message.reply_text(
+        await message.reply_text(
             f"This bot isn't set up yet. Your chat ID is {chat_id}.\n"
-            f"Add TELEGRAM_ALLOWED_CHAT_IDS={chat_id} to the bot's .env and restart it."
+            f"Set TELEGRAM_ALLOWED_CHAT_IDS={chat_id} in the bot's environment "
+            f"(.env locally, service variables on Railway) and restart it."
         )
     else:
-        await update.message.reply_text("This bot is private.")
+        await message.reply_text("This bot is private.")
     return False
 
 
 async def start(update, context) -> None:
     if not await _authorized(update):
         return
-    await update.message.reply_html(start_text())
+    await update.effective_message.reply_html(start_text())
 
 
 async def help_command(update, context) -> None:
     if not await _authorized(update):
         return
-    await update.message.reply_text(HELP_TEXT)
+    await update.effective_message.reply_text(HELP_TEXT)
+
+
+async def status(update, context) -> None:
+    if not await _authorized(update):
+        return
+    health = context.application.bot_data.get("alert_health")
+    await update.effective_message.reply_text(status_text(health))
 
 
 async def analysis(update, context) -> None:
     if not await _authorized(update):
         return
+    message = update.effective_message
 
     raw = context.args[0] if context.args else config.DEFAULT_PAIR
     pair = normalize_pair(raw)
     if pair is None:
-        await update.message.reply_text(
-            f"Couldn't read {raw!r} as a currency pair. Try /analysis EUR_USD."
+        shown = raw if len(raw) <= MAX_ECHOED_INPUT else raw[:MAX_ECHOED_INPUT] + "…"
+        await message.reply_text(
+            f"Couldn't read {shown!r} as a currency pair. Try /analysis EUR_USD."
         )
         return
     if pair not in config.LIVE_PAIRS:
-        await update.message.reply_text(
+        await message.reply_text(
             f"{pair} isn't enabled. Only {', '.join(config.LIVE_PAIRS)} passed the "
             f"backtest gate; the other tested pairs showed negative expectancy."
         )
@@ -109,11 +122,11 @@ async def analysis(update, context) -> None:
         text = await asyncio.to_thread(service.get_report, pair)
     except Exception:
         log.exception("analysis failed for %s", pair)
-        await update.message.reply_text(
+        await message.reply_text(
             "Couldn't build the report right now (the data refresh failed). "
             "Try again in a few minutes."
         )
         return
 
     for chunk in split_message(text):
-        await update.message.reply_text(chunk)
+        await message.reply_text(chunk)
