@@ -1,6 +1,6 @@
 # Strategy Rules — Liquidity Sweep + FVG Reversal
 
-Version: 1.4 (Phase 5 news-filter overlay)
+Version: 1.5 (trade-plan presentation overlay)
 Scope: mechanical, deterministic rules only. Every condition below must be evaluable as a
 pure function over OHLC(V) candle arrays and timestamps. No discretionary language.
 
@@ -23,6 +23,8 @@ pure function over OHLC(V) candle arrays and timestamps. No discretionary langua
   motivated this change.
 - v1.4: Added §10, the news-filter overlay. It never changes a signal, bias, or level, so
   §§1-9 and every backtest result are unaffected.
+- v1.5: Added §11, how the live trade plan (entry, stop, target) is derived and how it
+  differs from the backtest's close-based scoring. Presentation only; §§1-10 unchanged.
 
 ---
 
@@ -446,3 +448,29 @@ bias, level, or backtest result; it only attaches a `news` status to the live st
   and cannot be backtested. Do not treat the filter as improving the strategy's edge.
 - **Known gap:** near the weekend rollover the upcoming list can be empty even though the
   new week has events, because the feed hasn't published them yet.
+
+---
+
+## 11. Trade plan (presentation overlay, not a signal input)
+
+Built by `live/plan.py` for every active setup and shown above the report. It is arithmetic
+over the §3 and §6 values, computed by the engine and never by the narration model. It never
+generates, cancels or modifies a setup, bias, level, or backtest result.
+
+- **`live_trade`:** entry is the §6.2 signal price (the confirming H1 close), stop is §6.3,
+  target is §6.1, R:R is §6.4.
+- **Do-not-chase limit:** the entry at which R:R equals the §6.4 minimum for the same stop and
+  target, `(target + 1.5 × stop) / 2.5`. A fill beyond it (higher for a buy, lower for a sell)
+  is under the minimum, so a trader who cannot fill at or better than it skips the trade. This
+  applies §6.4 to the actual fill rather than the signal price; it is not a backtested rule.
+- **`pending_confirmation`:** the stop is §6.3 (it depends only on the sweep). The entry shown
+  is the trigger level, the best case, since the confirming close can only be further along.
+  The target is §6.1 evaluated as if the setup confirmed now at the trigger level. It is
+  labelled provisional because the real target is chosen at the confirming candle's close.
+- **`pending_fvg`:** no entry or target exists, so only the §6.3 stop and the §3 cancel level
+  are shown.
+- **Execution versus the backtest:** §6.5 scores a win or loss on H1 **closes**. A broker stop
+  or limit order fires on any touch, so hard SL/TP orders will act on wicks the backtest
+  ignores, and a demo account's results will differ from the backtest's. The §3 invalidation
+  is close-based and can trigger before the stop (`sweep_extreme` ± 5 pips) is touched, so the
+  plan tells the trader to close by hand on that close as well.
