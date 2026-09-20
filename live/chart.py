@@ -126,6 +126,8 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
     for s in setups:
         setup_levels += [v for v in (s.sweep_extreme, s.fvg_low, s.fvg_high, s.confirmation_level,
                                      s.entry_price, s.stop_price, s.target_price) if v is not None]
+        if s.status == "pending_confirmation" and s.plan is not None:
+            setup_levels += [v for v in (s.plan.stop, s.plan.target) if v is not None]
         # Room for the sweep marker and its caption beyond the extreme.
         ys.append(s.sweep_extreme - span * 0.12 if s.direction == "bullish"
                   else s.sweep_extreme + span * 0.12)
@@ -265,6 +267,20 @@ def _draw_setup(ax, setup: ActiveSetup, times: pd.Series, line_end: float,
         sign = ">" if bullish else "<"
         labels.append((setup.confirmation_level,
                        f"Confirm {sign} {format(setup.confirmation_level, fmt)}", "white"))
+        # The planned trade, dashed so it can't be mistaken for one that is live.
+        plan = setup.plan
+        if plan is not None:
+            # Spans the recent candles, like the liquidity lines, so the levels can be
+            # read against price action rather than being a short stub at the edge.
+            x0 = max(0, len(times) - 30)
+            ax.hlines(plan.stop, x0, line_end, colors=DOWN, linestyles="--", linewidth=1.6,
+                      alpha=0.85, zorder=3)
+            labels.append((plan.stop, f"Plan stop {format(plan.stop, fmt)}", DOWN))
+            if plan.target is not None:
+                ax.hlines(plan.target, x0, line_end, colors=UP, linestyles="--",
+                          linewidth=1.6, alpha=0.85, zorder=3)
+                reward = f" (+{plan.rr:.1f}R)" if plan.rr is not None else ""
+                labels.append((plan.target, f"Plan TP {format(plan.target, fmt)}{reward}", UP))
 
     # A confirmed trade: entry, stop, target and the risk/reward zones.
     if setup.status == "live_trade" and setup.entry_price is not None:

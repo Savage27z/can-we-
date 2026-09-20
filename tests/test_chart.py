@@ -6,6 +6,7 @@ import pandas as pd
 from PIL import Image
 
 from live import chart
+from live.plan import plan_for
 from live.state import ActiveSetup, LiveState
 from news.filter import NewsEventView, NewsStatus
 
@@ -31,7 +32,7 @@ def make_state(candles, setups=None, news=None, pair="EUR_USD", buy=(), sell=())
     )
 
 
-def make_setup(candles, status="live_trade", direction="bullish", sweep_offset=14):
+def make_setup(candles, status="live_trade", direction="bullish", sweep_offset=14, pair="EUR_USD"):
     n = len(candles)
     sweep_i, fvg_i, conf_i = n - sweep_offset, n - sweep_offset + 2, n - 8
     low = float(candles["low"].iloc[sweep_i])
@@ -39,7 +40,7 @@ def make_setup(candles, status="live_trade", direction="bullish", sweep_offset=1
     extreme = low if direction == "bullish" else high
     fvg_low = float(candles["close"].iloc[fvg_i])
     live = status == "live_trade"
-    return ActiveSetup(
+    setup = ActiveSetup(
         direction=direction, status=status, sweep_time=candles["time"].iloc[sweep_i].isoformat(),
         sweep_extreme=extreme, fvg_low=fvg_low, fvg_high=fvg_low + 0.001,
         confirmation_level=fvg_low,
@@ -50,6 +51,9 @@ def make_setup(candles, status="live_trade", direction="bullish", sweep_offset=1
         confirm_time=(candles["time"].iloc[conf_i] + pd.Timedelta(hours=2)).isoformat() if live else None,
         fvg_start_time=candles["time"].iloc[fvg_i].isoformat() if status != "pending_fvg" else None,
     )
+    # The engine attaches a plan to every setup; a waiting one plans towards a target.
+    setup.plan = plan_for(pair, setup, fvg_low + 0.006 if status == "pending_confirmation" else None)
+    return setup
 
 
 def decode(png: bytes) -> Image.Image:
@@ -84,6 +88,22 @@ class RenderChartTests(unittest.TestCase):
             NewsEventView("FOMC Statement", "USD", "2026-09-18T22:00:00+00:00", "in 25m")])
         flagged = chart.render_chart(c, make_state(c, news=news))
         self.assertNotEqual(plain, flagged)
+
+    def test_a_waiting_setup_draws_its_planned_stop_and_target(self):
+        c = make_candles()
+        with_plan = make_setup(c, "pending_confirmation")
+        without_plan = make_setup(c, "pending_confirmation")
+        without_plan.plan = None
+        drawn = chart.render_chart(c, make_state(c, [with_plan]))
+        bare = chart.render_chart(c, make_state(c, [without_plan]))
+        self.assertNotEqual(drawn, bare)
+        self.assert_real_image(drawn)
+
+    def test_a_setup_with_no_target_still_draws_its_planned_stop(self):
+        c = make_candles()
+        setup = make_setup(c, "pending_confirmation")
+        setup.plan = plan_for("EUR_USD", setup, None)
+        self.assert_real_image(chart.render_chart(c, make_state(c, [setup])))
 
     def test_jpy_pair_renders(self):
         c = make_candles(base=157.0)
