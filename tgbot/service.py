@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from live.chart import load_candles, render_chart
+from live.plan import SEPARATOR, plan_text
 from live.refresh import refresh_pair
 from live.state import LiveState, compute_current_state
 from narration.generate import narrate_state
@@ -51,10 +52,6 @@ def fallback_text(state: LiveState) -> str:
         lines.append(f"Sweep extreme {s.sweep_extreme} ({s.sweep_time})")
         if s.confirmation_level is not None:
             lines.append(f"Confirmation level {s.confirmation_level}")
-        if s.entry_price is not None:
-            lines.append(f"Entry {s.entry_price}  Stop {s.stop_price}  "
-                         f"Target {s.target_price}  R:R {s.rr:.2f}" if s.rr is not None
-                         else f"Entry {s.entry_price}  Stop {s.stop_price}")
     news = state.news
     if news.status == "blackout":
         for e in news.blackout_events:
@@ -96,7 +93,7 @@ class ReportService:
             self._refresh(pair)
             return self._compute(pair)
 
-    def _render(self, state: LiveState) -> tuple[str, bool]:
+    def _narrated_body(self, state: LiveState) -> tuple[str, bool]:
         """Returns (text, narrated). Anything short of usable narrated text —
         an exception, None, an empty string — degrades to the plain summary."""
         try:
@@ -108,6 +105,20 @@ class ReportService:
         except Exception as err:
             log.warning("narration failed for %s, sending plain summary: %s", state.pair, err)
         return fallback_text(state), False
+
+    def _render(self, state: LiveState) -> tuple[str, bool]:
+        """The trade plan comes first (it is what you act on), then the structural read.
+        The plan is computed by the engine, not the narration model, so it is still
+        there when narration falls back; and if rendering it ever fails, the read is
+        still sent."""
+        body, narrated = self._narrated_body(state)
+        try:
+            plan = plan_text(state)
+        except Exception:
+            log.exception("could not render the trade plan for %s; sending the read alone",
+                          state.pair)
+            plan = ""
+        return (plan + SEPARATOR + body if plan else body), narrated
 
     def render(self, state: LiveState) -> str:
         return self._render(state)[0]

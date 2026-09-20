@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from live.plan import plan_for
 from live.state import ActiveSetup, LiveState
 from news.filter import NewsEventView, NewsStatus
 
@@ -9,7 +10,7 @@ NOW = datetime(2026, 9, 22, 15, 0, tzinfo=timezone.utc)
 def setup(status="live_trade", direction="bullish", sweep_time="2026-09-22T09:00:00+00:00",
           confirmed_ago=timedelta(minutes=30)):
     confirmed = status == "live_trade"
-    return ActiveSetup(
+    made = ActiveSetup(
         direction=direction, status=status, sweep_time=sweep_time, sweep_extreme=1.1455,
         fvg_low=1.1460, fvg_high=1.1470, confirmation_level=1.1460,
         entry_price=1.1465 if confirmed else None,
@@ -19,6 +20,8 @@ def setup(status="live_trade", direction="bullish", sweep_time="2026-09-22T09:00
         h1_candles_to_confirm=2 if confirmed else None,
         confirm_time=(NOW - confirmed_ago).isoformat() if confirmed else None,
     )
+    made.plan = plan_for("EUR_USD", made)  # every setup the engine emits carries its plan
+    return made
 
 
 def blackout_news():

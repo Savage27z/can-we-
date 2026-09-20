@@ -6,7 +6,13 @@ from narration.deepseek_client import DeepSeekAPIError
 from tests.tg_helpers import blackout_news, make_state, setup
 from tgbot import config
 from tgbot.run_bot import RedactingFormatter, seconds_until_next_check
+from live.plan import SEPARATOR
 from tgbot.service import ReportService, fallback_text
+
+
+def body_of(text):
+    """The structural read that follows the trade plan."""
+    return text.split(SEPARATOR, 1)[-1]
 
 
 class Clock:
@@ -40,7 +46,7 @@ class ReportServiceTests(unittest.TestCase):
     def test_report_is_cached_within_the_ttl(self):
         clock = Clock()
         service, calls = make_service(lambda s: "NARRATED", clock)
-        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")
+        self.assertEqual(body_of(service.get_report("EUR_USD")), "NARRATED")
         clock.now += config.REPORT_CACHE_TTL - timedelta(seconds=1)
         service.get_report("EUR_USD")
         self.assertEqual((calls["refresh"], calls["compute"]), (1, 1))
@@ -60,7 +66,7 @@ class ReportServiceTests(unittest.TestCase):
         service, _ = make_service(failing)
         text = service.get_report("EUR_USD")
         self.assertIn("plain summary", text)
-        self.assertIn("Entry 1.1465", text)
+        self.assertIn("Signal price 1.14650", text)  # the plan survives the fallback
 
     def test_data_refresh_failure_propagates_and_is_not_cached(self):
         service = ReportService(
@@ -91,7 +97,7 @@ class NarrationFailureTests(unittest.TestCase):
         self.assertEqual(calls["refresh"], 1)  # still cached
 
         clock.now += timedelta(seconds=2)  # past the short fallback TTL
-        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")
+        self.assertEqual(body_of(service.get_report("EUR_USD")), "NARRATED")
         self.assertEqual(calls["refresh"], 2)
 
     def test_none_or_empty_narration_falls_back_instead_of_being_sent_or_cached(self):
@@ -112,7 +118,7 @@ class AnalysisChartTests(unittest.TestCase):
     def test_analysis_carries_the_text_and_the_chart(self):
         service, _ = make_service(lambda s: "NARRATED")
         analysis = service.get_analysis("EUR_USD")
-        self.assertEqual(analysis.text, "NARRATED")
+        self.assertEqual(body_of(analysis.text), "NARRATED")
         self.assertEqual(analysis.chart, b"PNG-BYTES")
 
     def test_text_and_chart_are_cached_together(self):
@@ -130,7 +136,7 @@ class AnalysisChartTests(unittest.TestCase):
         service = ReportService(lambda p: None, lambda p: make_state(), lambda s: "NARRATED",
                                 Clock(), broken_chart)
         analysis = service.get_analysis("EUR_USD")
-        self.assertEqual(analysis.text, "NARRATED")
+        self.assertEqual(body_of(analysis.text), "NARRATED")
         self.assertIsNone(analysis.chart)
 
     def test_the_chart_is_drawn_from_the_same_state_as_the_report(self):
@@ -151,12 +157,50 @@ class AnalysisChartTests(unittest.TestCase):
 
     def test_get_report_still_returns_just_the_text(self):
         service, _ = make_service(lambda s: "NARRATED")
-        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")
+        self.assertEqual(body_of(service.get_report("EUR_USD")), "NARRATED")
 
     def test_chart_for_is_safe_to_call_directly_for_alerts(self):
         service = ReportService(lambda p: None, lambda p: make_state(), lambda s: "x",
                                 Clock(), lambda s: (_ for _ in ()).throw(ValueError("no candles")))
         self.assertIsNone(service.chart_for(make_state()))
+
+
+class TradePlanInReportTests(unittest.TestCase):
+    def test_the_plan_comes_first_then_the_structural_read(self):
+        service, _ = make_service(lambda s: "NARRATED READ")
+        text = service.get_report("EUR_USD")
+        self.assertTrue(text.startswith("🎯 TRADE PLAN"))
+        self.assertIn("Stop-loss: 1.14500", text)
+        self.assertIn("Take-profit: 1.15000", text)
+        self.assertTrue(text.endswith("NARRATED READ"))
+        self.assertLess(text.index("TRADE PLAN"), text.index("NARRATED READ"))
+
+    def test_the_plan_survives_a_narration_failure(self):
+        def failing(state):
+            raise DeepSeekAPIError("down")
+
+        service, _ = make_service(failing)
+        text = service.get_report("EUR_USD")
+        self.assertIn("plain summary", text)
+        self.assertIn("Stop-loss: 1.14500", text)
+
+    def test_a_plan_rendering_bug_costs_only_the_plan(self):
+        from unittest.mock import patch
+
+        service, _ = make_service(lambda s: "NARRATED READ")
+        with patch("tgbot.service.plan_text", side_effect=RuntimeError("bug")):
+            self.assertEqual(service.get_report("EUR_USD"), "NARRATED READ")
+
+    def test_alerts_render_the_same_report_including_the_plan(self):
+        service, _ = make_service(lambda s: "NARRATED READ")
+        self.assertIn("TRADE PLAN", service.render(make_state([setup("live_trade")])))
+
+    def test_no_setup_still_says_there_is_nothing_to_enter(self):
+        service = ReportService(lambda p: None, lambda p: make_state(), lambda s: "READ",
+                                Clock(), lambda s: None)
+        text = service.get_report("EUR_USD")
+        self.assertIn("nothing to enter", text)
+        self.assertTrue(text.endswith("READ"))
 
 
 class RefreshSerialisationTests(unittest.TestCase):
@@ -186,7 +230,7 @@ class RefreshSerialisationTests(unittest.TestCase):
 
     def test_get_report_calling_fresh_state_does_not_deadlock(self):
         service, calls = make_service(lambda s: "NARRATED")
-        self.assertEqual(service.get_report("EUR_USD"), "NARRATED")  # would hang if not re-entrant
+        self.assertEqual(body_of(service.get_report("EUR_USD")), "NARRATED")  # would hang if not re-entrant
         self.assertEqual(calls["refresh"], 1)
 
 
