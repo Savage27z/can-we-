@@ -46,6 +46,7 @@ class ActiveSetup:
     rr: Optional[float]
     h1_candles_to_confirm: Optional[int]
     confirm_time: Optional[str]  # close time of the confirming H1 candle (ISO), None until confirmed
+    fvg_start_time: Optional[str] = None  # open time of the FVG's first candle (ISO); chart placement only
 
 
 @dataclass
@@ -63,7 +64,7 @@ class LiveState:
         return asdict(self)
 
 
-def _to_active_setup(result: SetupResult) -> ActiveSetup:
+def _to_active_setup(result: SetupResult, h4_times: pd.Series) -> ActiveSetup:
     return ActiveSetup(
         direction=result.direction,
         status=_LIVE_STATUS_LABELS[result.outcome],
@@ -78,6 +79,8 @@ def _to_active_setup(result: SetupResult) -> ActiveSetup:
         rr=result.rr,
         h1_candles_to_confirm=result.h1_candles_to_confirm,
         confirm_time=result.confirm_time.isoformat() if result.confirm_time is not None else None,
+        fvg_start_time=(h4_times.iloc[result.fvg.mid_index - 1].isoformat()
+                        if result.fvg else None),
     )
 
 
@@ -126,7 +129,7 @@ def compute_state_from_market(market: MarketData, news: Optional[NewsStatus] = N
         as_of=as_of.isoformat(),
         current_price=current_price,
         daily_bias=current_bias,
-        active_setups=[_to_active_setup(r) for r in active],
+        active_setups=[_to_active_setup(r, market.h4["time"]) for r in active],
         liquidity_buy_side=buy_side,
         liquidity_sell_side=sell_side,
         news=news if news is not None else NewsStatus.not_checked(),

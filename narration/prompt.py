@@ -27,9 +27,9 @@ add, remove, or rename sections.
 - Every field in the JSON is accounted for by an instruction below. If you \
 find a field with nowhere to put it, do not improvise a place for it or drop \
 it silently — that should not happen; treat it as a sign to re-read these \
-instructions rather than invent placement. The field "h1_candles_to_confirm" \
-is the one deliberate exception: it is diagnostic-only and must NOT appear \
-anywhere in the report.
+instructions rather than invent placement. The fields "h1_candles_to_confirm" \
+and "fvg_start_time" are the deliberate exceptions: they are diagnostic-only \
+(the second only positions a chart) and must NOT appear anywhere in the report.
 
 FORMAT TO PRODUCE (replace bracketed instructions with real content; do not \
 print the brackets or instructions themselves):
