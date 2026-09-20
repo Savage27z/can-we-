@@ -60,7 +60,8 @@ class RenderChartTests(unittest.TestCase):
     def assert_real_image(self, png):
         self.assertTrue(png.startswith(b"\x89PNG"), "not a PNG")
         img = decode(png)
-        self.assertEqual(img.size, (1280, 720))
+        self.assertEqual(img.size, (int(chart.FIG_SIZE[0] * chart.DPI),
+                                    int(chart.FIG_SIZE[1] * chart.DPI)))
         colors = img.convert("RGB").getcolors(maxcolors=100000)
         self.assertGreater(len(colors), 30, "image looks blank")
         return img
@@ -127,6 +128,28 @@ class RenderChartTests(unittest.TestCase):
         c = make_candles()
         state = make_state(c, [make_setup(c)])
         self.assertEqual(chart.render_chart(c, state), chart.render_chart(c, state))
+
+
+class LegibilityTests(unittest.TestCase):
+    """Telegram shows a photo in the chat bubble at under half its real size, so text
+    that looks fine at full size is unreadable there. These guard the settings that
+    keep it legible, so a later tweak can't quietly bring the tiny text back."""
+
+    def test_canvas_is_small_enough_and_fonts_large_enough_for_the_chat_bubble(self):
+        width_px = chart.FIG_SIZE[0] * chart.DPI
+        self.assertLessEqual(width_px, 1100)
+        for name in ("FONT_LABEL", "FONT_TICK", "FONT_SUBTITLE"):
+            self.assertGreaterEqual(getattr(chart, name), 12, name)
+        self.assertGreaterEqual(chart.FONT_TITLE, 20)
+
+    def test_header_row_texts_are_kept_short_enough_not_to_collide(self):
+        # The worst case: a long news-blackout banner beside the status line.
+        c = make_candles()
+        news = NewsStatus(status="blackout", blackout_events=[
+            NewsEventView("Non-Farm Employment Change", "USD", "2026-09-18T22:00:00+00:00", "in 1h 25m")])
+        state = make_state(c, [make_setup(c, "pending_confirmation")], news=news)
+        img = decode(chart.render_chart(c, state))
+        self.assertEqual(img.size[0], int(chart.FIG_SIZE[0] * chart.DPI))  # renders, no error
 
 
 class HelperTests(unittest.TestCase):
