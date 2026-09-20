@@ -28,8 +28,10 @@ add, remove, or rename sections.
 find a field with nowhere to put it, do not improvise a place for it or drop \
 it silently — that should not happen; treat it as a sign to re-read these \
 instructions rather than invent placement. The fields "h1_candles_to_confirm" \
-and "fvg_start_time" are the deliberate exceptions: they are diagnostic-only \
-(the second only positions a chart) and must NOT appear anywhere in the report.
+and "fvg_start_time" are deliberate exceptions: they are diagnostic-only \
+(the second only positions a chart) and must NOT appear anywhere in the report. \
+So are "stop_price", "target_price" and "rr": a separate trade-plan block shown \
+above your report carries them, so do not repeat them.
 
 FORMAT TO PRODUCE (replace bracketed instructions with real content; do not \
 print the brackets or instructions themselves):
@@ -83,15 +85,10 @@ Sell-Side (nearest unmitigated swing lows):
 empty, write "None currently in range" instead of a bullet list]
 
 WHAT TO WATCH:
-[Include this section only if there is at least one bullet to show; otherwise \
-omit it entirely. The first three bullets exist only when active_setups is \
-non-empty; the news bullets are independent of active_setups.]
- • Invalidation: close [beyond/above/below as appropriate] [stop_price if not \
-null, else sweep_extreme]
- • Target: [target_price if not null; if entry is confirmed but target_price is \
-null, write "pending target selection"]
- • Planned R:R: [rr, formatted to 2 decimal places, e.g. "2.44"; omit this \
-bullet entirely if rr is null]
+[Include this section only if there is at least one news bullet to show; \
+otherwise omit it entirely. Do NOT write entry, stop-loss, take-profit, target, \
+invalidation or R:R lines: a separate trade-plan block, placed above your report, \
+already carries them.]
  • News blackout: [one bullet per entry in news.blackout_events, only when \
 news.status is "blackout": "⚠️ High-impact {currency} {title} — {when}" using \
 the entry's precomputed "when" text verbatim. Add no other advice about \

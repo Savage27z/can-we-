@@ -54,6 +54,38 @@ class NarrateStateTests(unittest.TestCase):
         self.assertIn("You do not decide bias", captured["system_prompt"])
         self.assertIn("news.blackout_events", captured["system_prompt"])
 
+    def test_the_trade_plan_is_kept_from_the_model(self):
+        from live.plan import plan_for
+
+        setup = ActiveSetup(
+            direction="bullish", status="live_trade", sweep_time="2026-01-01T09:00:00+00:00",
+            sweep_extreme=1.0400, fvg_low=1.0410, fvg_high=1.0420, confirmation_level=1.0410,
+            entry_price=1.0430, stop_price=1.0395, target_price=1.0500, rr=2.0,
+            h1_candles_to_confirm=1, confirm_time="2026-01-01T12:00:00+00:00",
+        )
+        setup.plan = plan_for("EUR_USD", setup)
+        state = LiveState(pair="EUR_USD", as_of="2026-01-01T13:00:00+00:00", current_price=1.044,
+                          daily_bias="bullish", active_setups=[setup], liquidity_buy_side=[],
+                          liquidity_sell_side=[], news=NewsStatus(status="clear"))
+        captured = {}
+
+        def fake_chat(system_prompt, user_prompt, **kwargs):
+            captured["user_prompt"] = user_prompt
+            return "REPORT"
+
+        with patch("narration.generate.deepseek_client.chat", side_effect=fake_chat):
+            narrate_state(state)
+
+        sent = json.loads(captured["user_prompt"].split("\n\n", 1)[1])
+        self.assertNotIn("plan", sent["active_setups"][0])
+        self.assertIsNotNone(setup.plan)   # stripping the model's copy must not touch the state
+
+    def test_the_prompt_no_longer_asks_for_stop_target_or_rr_lines(self):
+        from narration.prompt import SYSTEM_PROMPT
+        for old in (" • Invalidation:", " • Target:", " • Planned R:R:"):
+            self.assertNotIn(old, SYSTEM_PROMPT)
+        self.assertIn("trade-plan block", SYSTEM_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
