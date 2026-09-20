@@ -433,10 +433,15 @@ bias, level, or backtest result; it only attaches a `news` status to the live st
 - **Blackout:** status is `blackout` while `now` is within 60 minutes before through 60 minutes
   after any relevant event (both edges inclusive). Clustered events merge into one blackout.
 - **Upcoming:** relevant events after `now`, outside blackout, within 72 hours; at most 5.
-- **Unavailable, not clear:** if the feed can't be fetched (and no cache exists), is empty, or
-  its date range is more than 1 day away from `now` (the feed hasn't rolled to the new week),
-  the status is `unavailable`. The filter never reports `clear` when it cannot see the
-  current time.
+- **Unavailable, not clear:** if the feed can't be fetched (and no cache exists), has no
+  usable events, its date range is more than 1 day away from `now` (the feed hasn't rolled to
+  the new week), or the calendar was last fetched more than 12 hours ago (refreshes are
+  failing and a stale cache is being served), the status is `unavailable`. The filter never
+  reports `clear` when it cannot see the current time, and an unexpected error inside the
+  filter also yields `unavailable` rather than failing the report.
+- **Alerts:** a blackout in progress defers a live-trade alert until it has passed. A trade
+  whose confirmation candle itself fell inside a blackout window is not pushed. An
+  `unavailable` status does not suppress alerts; the report says the news check is unavailable.
 - **Not validated:** the feed has no historical data, so these windows are judgment defaults
   and cannot be backtested. Do not treat the filter as improving the strategy's edge.
 - **Known gap:** near the weekend rollover the upcoming list can be empty even though the

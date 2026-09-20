@@ -93,12 +93,38 @@ class UpcomingTests(unittest.TestCase):
 class CoverageTests(unittest.TestCase):
     def test_now_far_outside_the_feed_range_is_unavailable_not_clear(self):
         calendar = cal(ev("FOMC Statement", "USD"))
-        status = nf.evaluate(calendar, "EUR_USD", T0 + timedelta(days=9))
+        now = T0 + timedelta(days=9)
+        calendar.fetched_at = now - timedelta(hours=1)  # freshly fetched, but last week's feed
+        status = nf.evaluate(calendar, "EUR_USD", now)
         self.assertEqual(status.status, "unavailable")
         self.assertIn("rolled over", status.reason)
 
+    def test_coverage_edge_is_exactly_one_day_past_the_last_event(self):
+        calendar = cal(ev("FOMC Statement", "USD"))
+        edge = T0 + nf.COVERAGE_TOLERANCE
+        calendar.fetched_at = edge - timedelta(hours=1)
+        self.assertEqual(nf.evaluate(calendar, "EUR_USD", edge).status, "clear")
+        calendar.fetched_at = edge + timedelta(seconds=1) - timedelta(hours=1)
+        self.assertEqual(nf.evaluate(calendar, "EUR_USD", edge + timedelta(seconds=1)).status,
+                         "unavailable")
+
     def test_empty_calendar_is_unavailable(self):
         self.assertEqual(nf.evaluate(cal(), "EUR_USD", T0).status, "unavailable")
+
+
+class StaleCalendarTests(unittest.TestCase):
+    def test_a_long_stale_cached_calendar_is_reported_unavailable_not_trusted(self):
+        # Refreshes have been failing and an old cache is being served.
+        calendar = Calendar(events=[ev("FOMC Statement", "USD")],
+                            fetched_at=T0 - nf.MAX_CALENDAR_AGE - timedelta(hours=1))
+        status = nf.evaluate(calendar, "EUR_USD", T0)
+        self.assertEqual(status.status, "unavailable")
+        self.assertIn("old", status.reason)
+
+    def test_a_calendar_just_inside_the_age_limit_is_used(self):
+        calendar = Calendar(events=[ev("FOMC Statement", "USD")],
+                            fetched_at=T0 - nf.MAX_CALENDAR_AGE + timedelta(minutes=1))
+        self.assertEqual(nf.evaluate(calendar, "EUR_USD", T0).status, "blackout")
 
 
 class CheckNewsTests(unittest.TestCase):
@@ -107,6 +133,15 @@ class CheckNewsTests(unittest.TestCase):
             status = nf.check_news("EUR_USD", now=T0)
         self.assertEqual(status.status, "unavailable")
         self.assertIn("boom", status.reason)
+
+    def test_an_unexpected_exception_is_contained_as_unavailable(self):
+        # News is an overlay: an OSError/OverflowError/TypeError inside it must not
+        # take down the report or alert that called it.
+        for error in (OSError("disk"), OverflowError("date"), TypeError("naive")):
+            with patch.object(nf, "load_calendar", side_effect=error):
+                status = nf.check_news("EUR_USD", now=T0)
+            self.assertEqual(status.status, "unavailable", repr(error))
+            self.assertIn(type(error).__name__, status.reason)
 
     def test_invalid_pair_is_rejected_before_any_fetch(self):
         with patch.object(nf, "load_calendar") as fetch:

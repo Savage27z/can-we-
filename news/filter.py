@@ -4,12 +4,15 @@ An overlay only — it never generates or changes a signal, bias, or level. Its
 parameters are judgment defaults, NOT backtested: the calendar feed has no
 historical data, so there is no way to measure whether these windows help.
 """
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .feed import Calendar, NewsFeedError, load_calendar
+
+log = logging.getLogger(__name__)
 
 IMPACT_HIGH = "High"
 BLACKOUT_BEFORE = timedelta(minutes=60)
@@ -19,6 +22,9 @@ MAX_UPCOMING = 5
 # The feed only holds the current calendar week; if "now" is further than this
 # outside its date range, the feed hasn't rolled over and can't vouch for now.
 COVERAGE_TOLERANCE = timedelta(days=1)
+# A calendar older than this means refreshes have been failing and a cached copy is
+# being served; event times don't change, but revisions and new events do.
+MAX_CALENDAR_AGE = timedelta(hours=12)
 
 _PAIR_RE = re.compile(r"^[A-Z]{3}_[A-Z]{3}$")
 
@@ -79,6 +85,15 @@ def evaluate(calendar: Calendar, pair: str, now: datetime) -> NewsStatus:
         return NewsStatus(status="unavailable", reason="calendar contains no events",
                           calendar_fetched_at=fetched_at)
 
+    age = now - calendar.fetched_at
+    if age > MAX_CALENDAR_AGE:
+        return NewsStatus(
+            status="unavailable",
+            reason=(f"calendar data is {round(age.total_seconds() / 3600)}h old; "
+                    f"refreshing it has been failing"),
+            calendar_fetched_at=fetched_at,
+        )
+
     first = min(e.time_utc for e in calendar.events)
     last = max(e.time_utc for e in calendar.events)
     if not (first - COVERAGE_TOLERANCE <= now <= last + COVERAGE_TOLERANCE):
@@ -112,7 +127,11 @@ def check_news(pair: str, now: Optional[datetime] = None) -> NewsStatus:
     now = now or datetime.now(timezone.utc)
     relevant_currencies(pair)  # validate the pair up front, before any network call
     try:
-        calendar = load_calendar(now)
+        return evaluate(load_calendar(now), pair, now)
     except NewsFeedError as err:
         return NewsStatus(status="unavailable", reason=str(err))
-    return evaluate(calendar, pair, now)
+    except Exception as err:
+        # News is an overlay: whatever goes wrong here must never take down an
+        # otherwise valid report or alert, only mark the news check unavailable.
+        log.exception("news check failed unexpectedly")
+        return NewsStatus(status="unavailable", reason=f"news check failed ({type(err).__name__})")
