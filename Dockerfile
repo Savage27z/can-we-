@@ -7,8 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Only what the bot imports at runtime (live/ builds on backtest/'s rule modules).
 # Tests, docs, local data and .env are deliberately not copied — see .dockerignore.
