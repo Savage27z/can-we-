@@ -3,8 +3,10 @@
 .venv/
 data/
 .git/
-__pycache__/
-*.pyc
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.claude/
 tests/
 strategy_rules.md
 Dockerfile
