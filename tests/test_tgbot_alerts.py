@@ -5,36 +5,76 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from telegram.error import Forbidden, InvalidToken
+
+from news.filter import NewsStatus
 from tests.tg_helpers import NOW, blackout_news, make_state, setup
 from tgbot import alerts, config
+
+
+def select(state, notified=frozenset(), chat_id=111, now=NOW, in_news_window=False):
+    with patch.object(alerts, "_confirmed_in_news_window", return_value=in_news_window):
+        return alerts.select_new_alerts(state, set(notified), now, chat_id)
 
 
 class SelectNewAlertsTests(unittest.TestCase):
     def test_only_confirmed_live_trades_alert(self):
         state = make_state([setup("pending_fvg"), setup("pending_confirmation"), setup("live_trade")])
-        selected = alerts.select_new_alerts(state, set(), NOW)
-        self.assertEqual([s.status for s in selected], ["live_trade"])
+        self.assertEqual([s.status for s in select(state)], ["live_trade"])
 
-    def test_already_notified_setup_is_skipped(self):
+    def test_dedup_is_per_chat(self):
         s = setup("live_trade")
-        self.assertEqual(alerts.select_new_alerts(make_state([s]), {alerts.alert_key(s)}, NOW), [])
+        state = make_state([s])
+        sent_to_111 = {alerts.delivery_key(state.pair, s, 111)}
+        self.assertEqual(select(state, sent_to_111, chat_id=111), [])
+        self.assertEqual(len(select(state, sent_to_111, chat_id=222)), 1)
+
+    def test_key_includes_the_pair(self):
+        s = setup("live_trade")
+        eur_key = alerts.delivery_key("EUR_USD", s, 111)
+        gbp_state = make_state([s])
+        gbp_state.pair = "GBP_USD"
+        self.assertEqual(len(select(gbp_state, {eur_key})), 1)
 
     def test_stale_confirmation_is_not_pushed_as_new(self):
         s = setup("live_trade", confirmed_ago=config.MAX_ALERT_AGE + timedelta(minutes=1))
-        self.assertEqual(alerts.select_new_alerts(make_state([s]), set(), NOW), [])
+        self.assertEqual(select(make_state([s])), [])
 
-    def test_news_blackout_suppresses_everything(self):
+    def test_news_blackout_defers_everything(self):
         state = make_state([setup("live_trade")], news=blackout_news())
-        self.assertEqual(alerts.select_new_alerts(state, set(), NOW), [])
+        self.assertEqual(select(state), [])
 
-    def test_alert_fires_once_the_blackout_has_passed(self):
+    def test_deferred_alert_fires_once_the_blackout_has_passed(self):
         s = setup("live_trade")
-        during = make_state([s], news=blackout_news())
-        after = make_state([s])
-        self.assertEqual(alerts.select_new_alerts(during, set(), NOW), [])
-        self.assertEqual(len(alerts.select_new_alerts(after, set(), NOW)), 1)
+        self.assertEqual(select(make_state([s], news=blackout_news())), [])
+        self.assertEqual(len(select(make_state([s]))), 1)
+
+    def test_trade_confirmed_inside_a_news_window_is_skipped(self):
+        state = make_state([setup("live_trade")])
+        self.assertEqual(select(state, in_news_window=True), [])
+
+    def test_stale_data_suppresses_alerts(self):
+        state = make_state([setup("live_trade")])
+        late = NOW + config.MAX_DATA_AGE + timedelta(minutes=1)
+        self.assertEqual(select(state, now=late), [])
+
+    def test_unavailable_news_does_not_suppress(self):
+        state = make_state([setup("live_trade")], news=NewsStatus(status="unavailable", reason="x"))
+        self.assertEqual(len(select(state)), 1)
+
+
+class ConfirmedInNewsWindowTests(unittest.TestCase):
+    def test_true_only_for_a_blackout(self):
+        with patch.object(alerts, "check_news", return_value=NewsStatus(status="blackout")):
+            self.assertTrue(alerts._confirmed_in_news_window("EUR_USD", NOW))
+        with patch.object(alerts, "check_news", return_value=NewsStatus(status="clear")):
+            self.assertFalse(alerts._confirmed_in_news_window("EUR_USD", NOW))
+
+    def test_a_failing_news_check_never_blocks_an_alert(self):
+        with patch.object(alerts, "check_news", side_effect=RuntimeError("boom")):
+            self.assertFalse(alerts._confirmed_in_news_window("EUR_USD", NOW))
 
 
 class AlertLogTests(unittest.TestCase):
@@ -61,10 +101,27 @@ class AlertLogTests(unittest.TestCase):
         self.assertEqual(len(keys), alerts.MAX_REMEMBERED)
         self.assertEqual(keys[-1], str(alerts.MAX_REMEMBERED + 24))
 
+    def test_a_failing_disk_does_not_raise_and_still_deduplicates(self):
+        with patch.object(self.log, "_write_disk", side_effect=OSError("disk full")):
+            self.log.add(["k1"])  # must not raise
+        self.assertIn("k1", self.log.load())
 
-def fake_context(service, alert_log, send):
-    app = SimpleNamespace(bot_data={"service": service, "alert_log": alert_log})
-    return SimpleNamespace(application=app, bot=SimpleNamespace(send_message=send))
+    def test_history_survives_a_disk_that_cannot_be_read(self):
+        self.log.add(["old"])
+        self.log.path.write_text("not json", encoding="utf-8")
+        self.log.add(["new"])
+        self.assertEqual(self.log.load(), ["old", "new"])
+
+
+def make_bot(send=None, get_me=None):
+    return SimpleNamespace(send_message=send or AsyncMock(), get_me=get_me or AsyncMock())
+
+
+def make_context(service, alert_log, bot, bot_data=None):
+    # One persistent dict across cycles, like the real application's bot_data.
+    data = bot_data if bot_data is not None else {}
+    data.update(service=service, alert_log=alert_log)
+    return SimpleNamespace(application=SimpleNamespace(bot_data=data), bot=bot)
 
 
 class AlertJobTests(unittest.TestCase):
@@ -72,51 +129,169 @@ class AlertJobTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.log = alerts.AlertLog(self.tmp / "alert_state.json")
         self.state = make_state([setup("live_trade")])
-        self.service = SimpleNamespace(fresh_state=lambda pair: self.state,
-                                       render=lambda state: "REPORT")
+        self.render_text = "REPORT"
+        self.service = SimpleNamespace(
+            fresh_state=lambda pair: self.state, render=lambda state: self.render_text)
+        self.bot_data = {}
+        for patcher in (
+            patch.object(alerts, "_utcnow", return_value=NOW),
+            patch.object(alerts, "_confirmed_in_news_window", return_value=False),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_job(self, send, chat_ids="111,222"):
-        with patch.dict("os.environ", {"TELEGRAM_ALLOWED_CHAT_IDS": chat_ids}), \
-             patch.object(alerts, "_utcnow", return_value=NOW):
-            asyncio.run(alerts.alert_job(fake_context(self.service, self.log, send)))
+    def run_job(self, bot, chat_ids="111,222", service=None, times=1):
+        ctx = make_context(service or self.service, self.log, bot, self.bot_data)
+        with patch.dict("os.environ", {"TELEGRAM_ALLOWED_CHAT_IDS": chat_ids}):
+            for _ in range(times):
+                asyncio.run(alerts.alert_job(ctx))
+        return ctx
 
-    def test_sends_to_every_allowed_chat_and_records_the_alert(self):
+    def test_sends_to_every_allowed_chat_and_records_each_delivery(self):
         send = AsyncMock()
-        self.run_job(send)
+        self.run_job(make_bot(send))
         self.assertEqual(send.await_count, 2)
         self.assertIn("REPORT", send.await_args.kwargs["text"])
-        self.assertEqual(len(self.log.load()), 1)
+        self.assertEqual(len(self.log.load()), 2)
 
-    def test_second_run_does_not_resend(self):
+    def test_a_second_cycle_does_not_resend(self):
         send = AsyncMock()
-        self.run_job(send)
-        self.run_job(send)
-        self.assertEqual(send.await_count, 2)  # still only the first run's two sends
+        self.run_job(make_bot(send), times=2)
+        self.assertEqual(send.await_count, 2)
 
-    def test_not_recorded_when_no_delivery_succeeds(self):
-        send = AsyncMock(side_effect=RuntimeError("telegram down"))
-        self.run_job(send)
-        self.assertEqual(self.log.load(), [])  # retried next cycle
+    def test_nothing_is_recorded_when_delivery_fails_so_it_retries(self):
+        self.run_job(make_bot(AsyncMock(side_effect=RuntimeError("telegram down"))))
+        self.assertEqual(self.log.load(), [])
+        send = AsyncMock()
+        self.run_job(make_bot(send))
+        self.assertEqual(send.await_count, 2)
 
-    def test_one_failing_chat_does_not_block_the_others(self):
-        calls = []
-
-        async def send(chat_id, text):
-            calls.append(chat_id)
+    def test_only_the_chat_that_failed_is_retried(self):
+        async def first_cycle_send(chat_id, text):
             if chat_id == 111:
-                raise RuntimeError("blocked by user")
+                raise RuntimeError("timeout")
 
-        self.run_job(send)
-        self.assertEqual(sorted(calls), [111, 222])
+        self.run_job(make_bot(first_cycle_send))
+        retry_targets = []
+
+        async def second_cycle_send(chat_id, text):
+            retry_targets.append(chat_id)
+
+        self.run_job(make_bot(second_cycle_send))
+        self.assertEqual(retry_targets, [111])  # 222 already had it; no duplicate
+
+    def test_a_blocked_chat_is_not_retried_forever(self):
+        async def blocked(chat_id, text):
+            raise Forbidden("bot was blocked by the user")
+
+        self.run_job(make_bot(blocked), chat_ids="111")
         self.assertEqual(len(self.log.load()), 1)
+        send = AsyncMock()
+        self.run_job(make_bot(send), chat_ids="111")
+        send.assert_not_awaited()
+
+    def test_an_oversized_alert_is_split_into_telegram_sized_messages(self):
+        self.render_text = "\n".join(["line " * 20] * 200)  # ~20k characters
+        sent = []
+
+        async def strict_send(chat_id, text):
+            if len(text) > 4096:
+                raise RuntimeError("Message is too long")
+            sent.append(text)
+
+        self.run_job(make_bot(strict_send), chat_ids="111")
+        self.assertGreater(len(sent), 1)
+        self.assertEqual(len(self.log.load()), 1)  # delivered, so recorded
+
+    def test_overlapping_runs_send_each_alert_only_once(self):
+        # The startup job and the hourly job are separate scheduler jobs and can overlap.
+        sent = []
+
+        async def slow_send(chat_id, text):
+            await asyncio.sleep(0.01)
+            sent.append(chat_id)
+
+        ctx = make_context(self.service, self.log, make_bot(slow_send), self.bot_data)
+
+        async def both():
+            await asyncio.gather(alerts.alert_job(ctx), alerts.alert_job(ctx))
+
+        with patch.dict("os.environ", {"TELEGRAM_ALLOWED_CHAT_IDS": "111,222"}):
+            asyncio.run(both())
+        self.assertEqual(sorted(sent), [111, 222])
 
     def test_no_allowed_chats_means_no_work(self):
         send = AsyncMock()
-        self.run_job(send, chat_ids="")
+        self.run_job(make_bot(send), chat_ids="")
         send.assert_not_awaited()
+
+    def test_a_rejected_token_exits_instead_of_leaving_a_deaf_bot_running(self):
+        bot = make_bot(get_me=AsyncMock(side_effect=InvalidToken("rejected")))
+        with patch.object(alerts, "_die") as die:
+            die.side_effect = SystemExit(1)  # the real _die never returns
+            with self.assertRaises(SystemExit):
+                self.run_job(bot)
+        die.assert_called_once()
+
+    def test_a_network_blip_on_getme_does_not_stop_the_cycle(self):
+        send = AsyncMock()
+        self.run_job(make_bot(send, get_me=AsyncMock(side_effect=RuntimeError("timeout"))))
+        self.assertEqual(send.await_count, 2)
+
+
+class HealthTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.log = alerts.AlertLog(self.tmp / "alert_state.json")
+        self.failing = True
+        self.bot_data = {}
+
+        def fresh_state(pair):
+            if self.failing:
+                raise RuntimeError("OANDA down")
+            return make_state()
+
+        self.service = SimpleNamespace(fresh_state=fresh_state, render=lambda s: "x")
+        patcher = patch.object(alerts, "_utcnow", return_value=NOW)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def cycle(self, send):
+        ctx = make_context(self.service, self.log, make_bot(send), self.bot_data)
+        with patch.dict("os.environ", {"TELEGRAM_ALLOWED_CHAT_IDS": "111"}):
+            asyncio.run(alerts.alert_job(ctx))
+
+    def test_a_failure_streak_warns_once_then_announces_recovery(self):
+        send = AsyncMock()
+        for _ in range(config.ALERT_FAILURES_BEFORE_WARNING - 1):
+            self.cycle(send)
+        send.assert_not_awaited()  # not yet
+
+        self.cycle(send)  # the streak reaches the threshold
+        self.assertEqual(send.await_count, 1)
+        self.assertIn("failed", send.await_args.kwargs["text"])
+
+        self.cycle(send)  # still failing: no repeated warning
+        self.assertEqual(send.await_count, 1)
+
+        self.failing = False
+        self.cycle(send)
+        self.assertEqual(send.await_count, 2)
+        self.assertIn("recovered", send.await_args.kwargs["text"])
+        self.assertEqual(self.bot_data["alert_health"]["consecutive_failures"], 0)
+
+    def test_health_records_the_last_error_and_cycle_time(self):
+        self.cycle(AsyncMock())
+        health = self.bot_data["alert_health"]
+        self.assertEqual(health["consecutive_failures"], 1)
+        self.assertIn("OANDA down", health["last_error"])
+        self.assertEqual(health["last_cycle"], NOW.isoformat())
 
 
 if __name__ == "__main__":
