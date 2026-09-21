@@ -2,6 +2,7 @@ import asyncio
 import shutil
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,13 @@ class ConfirmedInNewsWindowTests(unittest.TestCase):
             self.assertTrue(alerts._confirmed_in_news_window("EUR_USD", NOW))
         with patch.object(alerts, "check_news", return_value=NewsStatus(status="clear")):
             self.assertFalse(alerts._confirmed_in_news_window("EUR_USD", NOW))
+
+    def test_the_confirmation_time_is_judged_without_moving_the_cache_clock(self):
+        confirmed = NOW - timedelta(hours=2)
+        with patch.object(alerts, "check_news",
+                          return_value=NewsStatus(status="clear")) as check:
+            alerts._confirmed_in_news_window("EUR_USD", confirmed)
+        check.assert_called_once_with("EUR_USD", at=confirmed)
 
     def test_a_failing_news_check_never_blocks_an_alert(self):
         with patch.object(alerts, "check_news", side_effect=RuntimeError("boom")):
@@ -152,6 +160,65 @@ class AlertJobTests(unittest.TestCase):
             for _ in range(times):
                 asyncio.run(alerts.alert_job(ctx))
         return ctx
+
+    def _many_setups(self):
+        from live.plan import MAX_PLANS_SHOWN
+
+        return [setup("live_trade", sweep_time=f"2026-09-22T0{i}:00:00+00:00")
+                for i in range(MAX_PLANS_SHOWN + 1)]
+
+    def test_the_alert_describes_only_the_setups_that_were_selected(self):
+        fresh = setup("live_trade", sweep_time="2026-09-22T09:00:00+00:00")
+        blocked = setup("live_trade", sweep_time="2026-09-22T08:00:00+00:00",
+                        confirmed_ago=timedelta(minutes=90))
+        self.state = make_state([fresh, blocked])
+        blocked_at = blocked.confirm_time
+        rendered, charted = [], []
+        self.service.render = lambda st: rendered.append(st) or "REPORT"
+        self.service.chart_for = lambda st: charted.append(st) or None
+        with patch.object(alerts, "_confirmed_in_news_window",
+                          side_effect=lambda pair, at: at.isoformat() == blocked_at):
+            self.run_job(make_bot(AsyncMock()), chat_ids="111")
+        self.assertTrue(rendered and charted)
+        for st in rendered + charted:
+            self.assertEqual([s.sweep_time for s in st.active_setups], [fresh.sweep_time])
+        self.assertEqual(len(self.log.load()), 1)
+
+    def test_more_setups_than_a_message_shows_are_sent_in_batches_and_all_recorded(self):
+        from live.plan import MAX_PLANS_SHOWN
+
+        self.state = make_state(self._many_setups())
+        rendered = []
+        self.service.render = lambda st: rendered.append(len(st.active_setups)) or "REPORT"
+        send = AsyncMock()
+        self.run_job(make_bot(send), chat_ids="111")
+        self.assertTrue(all(n <= MAX_PLANS_SHOWN for n in rendered))
+        self.assertEqual(sum(rendered), MAX_PLANS_SHOWN + 1)   # every recorded setup was shown
+        self.assertEqual(send.await_count, 2)
+        self.assertEqual(len(self.log.load()), MAX_PLANS_SHOWN + 1)
+
+    def test_a_failed_batch_leaves_only_its_own_setups_unrecorded(self):
+        from live.plan import MAX_PLANS_SHOWN
+
+        self.state = make_state(self._many_setups())
+        send = AsyncMock(side_effect=[None, RuntimeError("down")])
+        self.run_job(make_bot(send), chat_ids="111")
+        self.assertEqual(len(self.log.load()), MAX_PLANS_SHOWN)   # the rest retry next cycle
+
+    def test_stale_data_is_a_failed_check_not_a_healthy_one(self):
+        self.state = make_state([setup("live_trade")])
+        with patch.object(alerts, "_utcnow", return_value=NOW + timedelta(hours=24)):
+            ctx = self.run_job(make_bot(AsyncMock()), chat_ids="111")
+        health = ctx.application.bot_data["alert_health"]
+        self.assertEqual(health["consecutive_failures"], 1)
+        self.assertIn("stale", health["last_error"])
+
+    def test_the_weekend_closure_does_not_count_as_a_failure(self):
+        friday_close = NOW.replace(day=18, hour=21)
+        self.state = replace(make_state(), as_of=friday_close.isoformat())
+        with patch.object(alerts, "_utcnow", return_value=friday_close + timedelta(hours=30)):
+            ctx = self.run_job(make_bot(AsyncMock()), chat_ids="111")
+        self.assertEqual(ctx.application.bot_data["alert_health"]["consecutive_failures"], 0)
 
     def test_the_push_opens_by_saying_it_is_analysis_not_a_trade_signal(self):
         from tgbot.wording import ALERT_HEADER

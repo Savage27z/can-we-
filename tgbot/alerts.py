@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import tempfile
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,8 @@ from typing import Optional
 from telegram.error import Forbidden, InvalidToken
 
 from data_pipeline import config as data_config
+from live.freshness import is_stale
+from live.plan import MAX_PLANS_SHOWN
 from live.state import ActiveSetup, LiveState
 from news.filter import check_news
 
@@ -47,7 +50,7 @@ def delivery_key(pair: str, setup: ActiveSetup, chat_id: int) -> str:
 
 def _confirmed_in_news_window(pair: str, confirmed_at: datetime) -> bool:
     try:
-        return check_news(pair, now=confirmed_at).status == "blackout"
+        return check_news(pair, at=confirmed_at).status == "blackout"
     except Exception:
         log.exception("could not check news at confirmation time; not suppressing")
         return False
@@ -65,7 +68,7 @@ def select_new_alerts(state: LiveState, notified: set[str], now: datetime,
         return []
 
     as_of = datetime.fromisoformat(state.as_of)
-    if now - as_of > config.MAX_DATA_AGE:
+    if is_stale(as_of, now, config.MAX_DATA_AGE):
         log.warning("not alerting: newest candle closed %s ago, data is stale", now - as_of)
         return []
 
@@ -186,22 +189,38 @@ async def _run_cycle(context, chat_ids: set[int]) -> Optional[str]:
             error = f"{type(err).__name__}: {err}"
             continue
 
-        notified = set(alert_log.load())
+        as_of = datetime.fromisoformat(state.as_of)
         now = _utcnow()
-        report = None
-        chart = None
+        if is_stale(as_of, now, config.MAX_DATA_AGE):
+            # A refresh that "succeeds" without newer candles must not read as healthy.
+            log.warning("%s data is stale (as of %s); skipping its alerts", pair, state.as_of)
+            error = f"{pair} data is stale (newest candle closed {state.as_of})"
+            continue
+
+        notified = set(alert_log.load())
+        rendered: dict[tuple, tuple[str, Optional[bytes]]] = {}
         for chat_id in sorted(chat_ids):
-            new = select_new_alerts(state, notified, now, chat_id)
-            if not new:
-                continue
-            if report is None:
-                rendered = await asyncio.to_thread(service.render, state)
-                report = ALERT_HEADER + "\n\n" + rendered
-                chart = await asyncio.to_thread(service.chart_for, state)
-            if await _send(context.bot, chat_id, report, chart):
-                alert_log.add([delivery_key(state.pair, s, chat_id) for s in new])
-            else:
-                error = f"delivery to chat {chat_id} failed"
+            # Judged off the event loop: the news check may need the network.
+            new = await asyncio.to_thread(select_new_alerts, state, notified, now, chat_id)
+            new.sort(key=lambda s: s.sweep_time, reverse=True)  # the order plans are shown in
+            # A message shows at most MAX_PLANS_SHOWN plans, so send in batches of that
+            # size and record a setup only once a message that showed it was delivered.
+            for i in range(0, len(new), MAX_PLANS_SHOWN):
+                batch = new[i:i + MAX_PLANS_SHOWN]
+                ident = tuple((s.direction, s.sweep_time) for s in batch)
+                if ident not in rendered:
+                    # Text and chart both describe only the setups being alerted, never
+                    # ones that were filtered out or already sent.
+                    subset = replace(state, active_setups=batch)
+                    text = await asyncio.to_thread(service.render, subset)
+                    chart = await asyncio.to_thread(service.chart_for, subset)
+                    rendered[ident] = (ALERT_HEADER + "\n\n" + text, chart)
+                report, chart = rendered[ident]
+                if await _send(context.bot, chat_id, report, chart):
+                    alert_log.add([delivery_key(state.pair, s, chat_id) for s in batch])
+                else:
+                    error = f"delivery to chat {chat_id} failed"
+                    break
     return error
 
 

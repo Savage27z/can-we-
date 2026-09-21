@@ -127,6 +127,24 @@ class StaleCalendarTests(unittest.TestCase):
         self.assertEqual(nf.evaluate(calendar, "EUR_USD", T0).status, "blackout")
 
 
+class HistoricalCheckTests(unittest.TestCase):
+    """The moment judged (`at`) and the wall clock (`now`) are different things."""
+
+    def test_a_current_calendar_still_protects_an_earlier_moment(self):
+        wall = T0 + timedelta(hours=2)
+        calendar = Calendar(events=[ev("FOMC Statement", "USD")], fetched_at=wall)
+        with patch.object(nf, "load_calendar", return_value=calendar) as load:
+            status = nf.check_news("EUR_USD", now=wall, at=T0 + timedelta(minutes=30))
+        load.assert_called_once_with(wall)   # the cache clock is the wall clock, not `at`
+        self.assertEqual(status.status, "blackout")
+
+    def test_calendar_age_is_measured_against_the_wall_clock(self):
+        old = Calendar(events=[ev("FOMC Statement", "USD")],
+                       fetched_at=T0 - nf.MAX_CALENDAR_AGE - timedelta(hours=1))
+        status = nf.evaluate(old, "EUR_USD", T0, clock=T0 + timedelta(days=1))
+        self.assertEqual(status.status, "unavailable")
+
+
 class CheckNewsTests(unittest.TestCase):
     def test_feed_failure_becomes_unavailable(self):
         with patch.object(nf, "load_calendar", side_effect=NewsFeedError("boom")):
