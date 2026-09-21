@@ -125,8 +125,34 @@ setups matches the legacy evaluator exactly (outcome, R, entry and exit times).
   halves, 1.3% of label shuffles do as well) and are not just drift (USD_ZAR earns the same on
   buys and sells), but they do not survive costs.
 
-None of this validates the strategy. It shows the platform works, and that with costs charged
-the strategy has not been distinguished from having no edge.
+### Validation (`research.validate`, 65 pairs, 1000 random-entry replays per signal)
+
+- **Before costs the entry signal adds nothing.** On the strategy's own scoring the real trades
+  earned +0.057R and random entries with the same stops and targets +0.060R: excess -0.002R
+  (p = 0.51, 7,597 trades). The pooled test could have detected an excess of about 0.044R; a
+  single pair only one above about 0.29R, so per-pair "not significant" says little.
+- **After realistic exits and spread it is worse than random**: -0.426R against -0.337R, an
+  excess of -0.088R. Of that, -0.016R is entry timing and -0.072R is extra spread: 23% of the
+  strategy's entries are in the 21:00 UTC candle, which closes at the New York rollover, and 32%
+  at 07:00, because signals fire just after H4 candles close.
+- **No pair survives correction.** 3 of 65 beat random entry at 5% before correction, about
+  what chance gives (3.2); none after Benjamini-Hochberg, Holm or max-t. 15 of 65 have a positive
+  excess after costs and 30 of 65 before, again about half or fewer.
+- **Choosing pairs on the past does work out of sample, but only as far as breakeven.** Ranking
+  by net R before each two-year block and taking the top five: +0.279R out of sample on the
+  strategy's own scoring (random picking +0.087R, p = 0.043) and -0.025R after realistic costs
+  (random picking -0.340R, p = 0.001, 7 of 8 blocks). EUR_USD is among the five in 7 of 8 blocks.
+- **Why pair differences persist.** Random entries in the same pairs earn positive R under the
+  strategy's scoring too (USD_ZAR +0.14R, HKD_JPY +0.19R), so much of the persistence is the pair's
+  payoff geometry and costs, not the entry signal.
+- **Looks taken so far:** 6 configurations and 148 pair-tests (`python -m research.registry`).
+  The best raw p-value, 0.008, is not significant counting all of them.
+
+None of this validates the strategy. Its entry signal has not been distinguished from entering at
+random, and with realistic costs no pair, chosen in advance or afterwards, has been shown to
+make money. Two follow-ups are suggested by the data but would need validating in their own
+right: the spread paid at the rollover-hour entries, and the strategy's cost-sensitivity to tight
+stops.
 
 ## Not built yet
 
