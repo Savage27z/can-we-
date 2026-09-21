@@ -27,6 +27,7 @@ python -m research.run_backtest --all --workers 8 --exit plan --costs spread --o
 # 4. Validate: is the result distinguishable from luck? (about 10 minutes for all 65 pairs)
 python -m research.validate --all --workers 11 --exit plan --costs spread --out-dir data/runs/my_validation
 python -m research.registry                                   # every run logged so far, and the trial count
+python -m research.preregistered s4_donchian_random           # apply the pre-registered decision rules
 ```
 
 `--exit` is how a trade ends and `--costs` is what it costs; both matter (see below).
@@ -78,6 +79,14 @@ Every saved run and validation is logged in `data/registry/runs.jsonl` with the 
 the trial count (configurations and instruments looked at) is printed with each validation. A
 p-value means something different after 3 looks than after 300.
 
+**Which null.** `--null-direction random` (randomise direction as well as timing) asks whether the
+strategy beats coin-flip entries with the same stops, targets and costs. `same` (keep each signal's
+direction) asks about timing alone, but it is biased: it applies a signal's direction to random dates
+before the signal too, where that direction was only knowable in hindsight, which inflates the null
+for momentum signals and deflates it for reversal signals. Use `random` for verdicts and treat `same` as a
+diagnostic. A strategy can declare `entry_mask(h1)` so the null draws only from candles it could have
+entered on, and `daily_warmup_days` for the history its indicators need.
+
 The random-entry draws are independent between instruments while real pairs are correlated, which
 makes the max-t correction if anything conservative. The pooled p-value treats trades as
 independent, which overlapping trades on correlated pairs are not, so it is somewhat optimistic.
@@ -102,8 +111,11 @@ setups matches the legacy evaluator exactly (outcome, R, entry and exit times).
    price, stop, target. The strategy does not decide how a trade ends or what it costs.
    `Signal` rejects a stop, entry and target that are out of order.
 2. Register it in `research/strategies/__init__.py`.
-3. Test it on a hand-built market whose answer you know, as `tests/test_research.py` does
-   for sweep/FVG with the strategy document's worked example.
+3. Test it on a hand-built market whose answer you know, as `tests/test_strategies.py` does, and add it
+   to `tests/test_strategies_lookahead.py`, which cuts the data off at several moments and checks the
+   strategy gives exactly the signals it gave in the full run (it fails a strategy that peeks, and
+   fails the build if a registered strategy has no such test).
+   Write the parameters and the decision rules down first, as `PREREGISTRATION.md` does.
 4. Run it with `--exit close`, then `plan` and `touch`, with and without `--costs spread`.
    A strategy that only works under the most generous assumptions has not worked.
 
@@ -148,13 +160,32 @@ setups matches the legacy evaluator exactly (outcome, R, entry and exit times).
 - **Looks taken so far:** 6 configurations and 148 pair-tests (`python -m research.registry`).
   The best raw p-value, 0.008, is not significant counting all of them.
 
-None of this validates the strategy. Its entry signal has not been distinguished from entering at
-random, and with realistic costs no pair, chosen in advance or afterwards, has been shown to
-make money. Two follow-ups are suggested by the data but would need validating in their own
-right: the spread paid at the rollover-hour entries, and the strategy's cost-sensitivity to tight
-stops.
+### Stage 4: three more strategies, pre-registered (`PREREGISTRATION.md`)
+
+Wide ATR-scaled stops were tried because tight ones let the spread swamp everything (cost per trade
+0.065R on average against 0.39R for sweep/FVG). The strategies, parameters and decision rules were
+fixed and committed before any was run, and applied by code afterwards.
+
+- **The control passed** (pooled p = 0.50, 4.6% of pairs at raw p < 0.05, mean pair p 0.52), so the
+  validation pipeline is calibrated on real data.
+- **None of the three is a candidate.** Daily Donchian breakout: -0.113R net, and 0.052R *worse* than
+  random entries. London range breakout: -0.179R net; its direction call beats random entry by a
+  statistically significant 0.012R per trade (p = 0.002, 217,443 trades) against 0.187R of
+  spread, so real but worthless. Daily Bollinger reversion: -0.044R net, negative in both halves.
+- **The rollover fix helps but does not rescue sweep/FVG:** dropping 21:00 UTC entries improves it
+  from -0.426R to -0.310R and it is then indistinguishable from random entry.
+- **Pairs differ mainly in how cheap they are to trade.** Across pairs net expectancy correlates
+  -0.71 to -0.98 with average cost, including for the random-entry control; gross expectancy does not.
+  The walk-forward "selection works" result is mostly this.
+
+None of this validates any strategy. Across four strategies and 21 years, no entry signal has been
+shown to make money after costs, and the only statistically significant effect (London range
+breakout's direction call) is about a hundredth of a risk unit per trade. The rules were
+pre-registered, so a failure here is a result, not a reason to loosen them.
 
 ## Not built yet
 
 Portfolio limits (a cap on simultaneous and correlated trades), tuning strategy parameters
-inside the walk-forward (the only strategy so far has none), and any order execution.
+inside the walk-forward (every strategy so far has fixed, pre-registered parameters), strategies on
+information other than price (carry, macro), and any order execution. With no strategy having
+survived validation, there is nothing yet worth executing.
