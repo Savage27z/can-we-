@@ -68,6 +68,20 @@ def usable_window(instrument: str, timeframes: tuple[str, ...]) -> Optional[Wind
     return Window(start=start, daily_start=daily)
 
 
+def window_for(timeframes: tuple[str, ...], instrument: str, start: str) -> Optional[Window]:
+    """The window a run should use: "all" (no cut), "auto" (the instrument's dense history) or an
+    explicit date. An instrument with no dense history is an error, not a silent empty run."""
+    if start == "all":
+        return None
+    if start == "auto":
+        window = usable_window(instrument, timeframes)
+        if window is None:
+            raise ValueError("no dense history in every timeframe (see python -m "
+                             "data_pipeline.quality); use --start all to run on it anyway")
+        return window
+    return window_from_start(pd.Timestamp(start, tz="UTC"))
+
+
 def load_frames(instrument: str, timeframes: tuple[str, ...],
                 window: Optional[Window] = None) -> dict[str, pd.DataFrame]:
     """The stored candle frames a strategy asked for, plus the H1 execution frame,

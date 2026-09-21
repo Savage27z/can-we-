@@ -32,7 +32,7 @@ from .strategy import BULLISH, Signal
 from .vector import Arrays, resolve_batch
 
 DEFAULT_WINDOW_DAYS = 60
-CHUNK = 20_000                 # random trades resolved per batch, to bound memory
+CHUNK = 8_192                  # random trades resolved per batch, to bound memory
 DIRECTIONS = ("same", "random")
 
 

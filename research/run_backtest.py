@@ -31,22 +31,14 @@ import pandas as pd
 
 from data_pipeline import config, instruments
 
-from . import engine, scoring
+from . import engine, registry, scoring
 from .costs import get_cost
 from .exits import get_exit
 from .strategies import STRATEGIES, get_strategy
 
 
 def _window_for(strategy: str, instrument: str, start: str):
-    if start == "all":
-        return None
-    if start == "auto":
-        window = engine.usable_window(instrument, get_strategy(strategy).timeframes)
-        if window is None:
-            raise ValueError("no dense history in every timeframe (see python -m "
-                             "data_pipeline.quality); use --start all to run on it anyway")
-        return window
-    return engine.window_from_start(pd.Timestamp(start, tz="UTC"))
+    return engine.window_for(get_strategy(strategy).timeframes, instrument, start)
 
 
 def _run_one(job: tuple) -> dict:
@@ -111,7 +103,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--workers", type=int, default=1, help="Instruments to run at once.")
     parser.add_argument("--data-dir", default=None, help="Read candles from here instead.")
     parser.add_argument("--out-dir", default=None,
-                        help="Write trades.csv, summary.csv and run.json here.")
+                        help="Write trades.csv, summary.csv and run.json here (and log the run "
+                             "in the registry).")
+    parser.add_argument("--no-register", action="store_true",
+                        help="Do not log a saved run in the registry.")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):      # absent when output is captured or piped by a wrapper
         sys.stdout.reconfigure(encoding="utf-8")
@@ -178,6 +173,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         (out / "run.json").write_text(json.dumps(record, indent=1, default=str) + "\n",
                                       encoding="utf-8")
         print(f"\nwrote {out}/trades.csv, summary.csv, run.json")
+        if not args.no_register:
+            registry.record("backtest", args.strategy, args.exit, args.costs, args.start,
+                            [o["instrument"] for o in done], pooled or {},
+                            slippage_pips=args.slippage_pips, note=f"saved to {out.name}")
+            counts = registry.trial_counts()
+            print(f"registry: {counts['runs']} runs, {counts['configs']} configurations, "
+                  f"{counts['pair_tests']} pair-tests logged so far")
     return 1 if failed else 0
 
 
