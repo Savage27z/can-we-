@@ -38,6 +38,7 @@ from .null_model import NullResult
 from .strategies import STRATEGIES, get_strategy
 
 MAJORS = ("EUR_USD", "GBP_USD", "USD_JPY")
+ONE_SIDED_5_PERCENT_Z = 1.645
 
 
 def _validate_one(job: tuple) -> dict:
@@ -77,7 +78,7 @@ def per_instrument_table(outcomes: list[dict]) -> tuple[pd.DataFrame, dict[str, 
         c = null_model.compare(float(resolved["r_net"].mean()), null)
         rows.append({"instrument": o["instrument"], "data_from": o["data_from"],
                      "n": len(resolved), "real": c.observed, "null": c.null_mean,
-                     "excess": c.excess, "z": c.z, "p": c.p_value,
+                     "excess": c.excess, "z": c.z, "p": c.p_value, "null_sd": c.null_sd,
                      "avg_cost_r": float(resolved["cost_r"].mean())})
         nulls[o["instrument"]] = null
     table = pd.DataFrame(rows)
@@ -234,7 +235,13 @@ def main(argv: Optional[list[str]] = None) -> int:
           f"(median {resolved['cost_r'].median():.3f}R)\n")
     decomposition = decompose(resolved, pooled_null)
     print(format_decomposition(decomposition))
+    # "Not significant" is only informative next to how large an effect the test could have seen.
+    detectable = ONE_SIDED_5_PERCENT_Z * pooled.null_sd
+    per_pair_sd = float(table["null_sd"].median())
     print(f"most common entry-candle opens (UTC): {entry_hours(resolved)}")
+    print(f"power: the pooled test would have detected an entry-timing excess of about "
+          f"{detectable:.3f}R per trade or more; a single pair (typical null spread "
+          f"{per_pair_sd:.2f}R) only one above about {ONE_SIDED_5_PERCENT_Z * per_pair_sd:.2f}R")
 
     alpha = args.alpha
     counts = {"raw": int((table["p"] < alpha).sum()), "bh": int((table["p_bh"] < alpha).sum()),
@@ -254,8 +261,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     results = {
         "pooled": {"trades": len(resolved), "real": pooled.observed, "null": pooled.null_mean,
-                   "excess": pooled.excess, "z": pooled.z, "p": pooled.p_value},
-        "decomposition": decomposition,
+                   "excess": pooled.excess, "z": pooled.z, "p": pooled.p_value,
+                   "null_sd": pooled.null_sd, "min_detectable_excess": detectable},
+        "per_pair_null_sd_median": per_pair_sd, "decomposition": decomposition,
         "survivors": counts, "instruments_tested": len(table),
         "walk_forward": {"selected_mean": wf.selected_mean, "all_mean": wf.all_mean,
                          "random_pick_mean": wf.random_pick_mean, "p": wf.p_value,

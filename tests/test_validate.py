@@ -49,6 +49,11 @@ class TableTests(unittest.TestCase):
         self.assertGreater(row.loc["BAD", "p"], 0.9)
         self.assertEqual(set(nulls), {"STRONG", "WEAK", "BAD"})
 
+    def test_each_instruments_null_spread_is_reported_for_the_power_statement(self):
+        table, _ = validate.per_instrument_table(self.outcomes)
+        self.assertTrue((table["null_sd"] > 0).all())
+        self.assertAlmostEqual(table.set_index("instrument").loc["WEAK", "null_sd"], 0.1, delta=0.02)
+
     def test_corrections_are_never_smaller_than_the_raw_p(self):
         table, _ = validate.per_instrument_table(self.outcomes)
         for col in ("p_bh", "p_holm", "p_maxt"):
@@ -220,6 +225,7 @@ class ReportIncludesTheDecompositionTests(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
         self.assertEqual(code, 0)
         self.assertIn("per trade, in R", out.getvalue())
+        self.assertIn("would have detected an entry-timing excess", out.getvalue())
         self.assertIn("most common entry-candle opens", out.getvalue())
 
 
