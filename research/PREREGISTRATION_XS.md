@@ -137,3 +137,75 @@ in an Outcome section, as in stage 4.
   independent regimes.
 - Momentum and carry are correlated in FX; this tests price momentum only and cannot separate it from
   carry, whose data we lack.
+
+## Outcome
+
+Run once on 2026-09-21 with the code as committed (9e2bee8, clean tree) and the defaults of this
+document: 16 of 16 currencies, cohorts from 2005-01-03 to 2026-08-17 (momentum) and 2026-09-07
+(reversal), 10,000 permutation replicates, 10,000 bootstrap resamples, 200 random assignments, seed 0.
+Nothing was rerun or adjusted after the result was seen. Both strategies and their controls are in
+the registry; the outputs are in `data/runs/xs_frozen` (not committed).
+
+**The controls passed for both strategies**, on each strategy's own cohorts. X0: 5.5% (momentum) and
+4.0% (reversal) of random assignments fell below p = 0.05, against a limit of 9%, with mean p 0.518
+and 0.484 (band 0.44 to 0.56). X9: the oracle was detected, gross +1.28R and +0.70R per leg, p = 0.0001
+(the floor with 10,000 replicates). The pipeline is calibrated, and a ranking that carried information
+would have shown up.
+
+**Neither strategy is a candidate. All three rules fail for both.**
+
+| | X1 momentum (84 days, 4 weeks) | X2 reversal (7 days, 1 week) |
+|---|---|---|
+| Legs (cohorts) | 6,726 (1,121) | 6,744 (1,124) |
+| Gross R per leg | +0.0037 | -0.0005 |
+| Null gross R (sd) | +0.0029 (0.0136) | -0.0008 (0.0072) |
+| Rule 2: gross permutation p (needs < 0.025) | 0.472 | 0.486 |
+| Cost per leg | 0.0426R | 0.0404R |
+| Net R per leg | -0.0388 | -0.0409 |
+| Rule 1: 95% block-bootstrap interval on net | [-0.086, +0.011] | [-0.060, -0.021] |
+| Rule 3: net, 2005-2015 / 2016-2026 | +0.005 / -0.085 | -0.036 / -0.046 |
+| Gross excess the test would have detected | about 0.022R | about 0.012R |
+
+Reading: neither ranking carries measurable information about the next period's currency returns.
+Reversal earns nothing before costs and loses its costs; its interval sits wholly below zero.
+Momentum's net loss is also its costs, with an interval that includes zero. Its halves differ
+(+0.005, then -0.085), but the interval is about 0.1R wide, so that is not a finding. Not
+interpreted, and not acted on as the rules above require: momentum's long legs (gross -0.035R)
+against its short legs (+0.042R), and the per-currency tables. THB's reversal cost is 0.28R per leg,
+the width of that pair's spread against a one-week ATR unit.
+
+**The stop rule applies.** Neither strategy is a candidate, so the question of an edge in forex
+price data at intraday, daily and weekly-to-monthly horizons is closed for this data: sweep/FVG,
+the three stage 4 strategies and these two all fail. No further FX price strategy is run without a
+genuinely new hypothesis or new data. Carry is the obvious untested idea, but it is not price data
+and we hold no history of interest rates.
+
+### Deviations, clarifications, and a flaw found after the run
+
+- **Missing exits.** This document did not say what happens to a leg whose exit cannot be found. The
+  code drops that leg (per currency and cohort) identically for the strategy and the null, and skips
+  a cohort with fewer than 8 eligible currencies. It made no difference: nothing was dropped, and
+  every cohort has exactly six legs (6 x 1,121 = 6,726; 6 x 1,124 = 6,744).
+- **Controls on each strategy's own cohorts.** X0 and X9 were run on the calendar of the strategy they
+  vouch for, since the two calendars differ by a few cohorts and a control on another calendar would
+  not prove anything about this one.
+- **The per-currency table is not corrected.** This document promised Benjamini-Hochberg correction;
+  the table prints legs, gross and net with no p-values, so there is nothing to correct and it is
+  description only.
+- **Code written after the freeze.** All of `research/xs/` was written after this document was
+  frozen, as it said it would be, and nothing changed between commit 9e2bee8 and the run.
+- **The permutation null understates the strategy's own sampling noise.** The null draws each
+  cohort's assignment independently, but real rankings persist from week to week (the same
+  currencies stay extreme while a trend lasts, and holds overlap) and currency returns are serially
+  dependent. A diagnostic added after the run, not a decision (moving-block bootstrap of the
+  saved legs, blocks of 4 cohorts, 4,000 resamples), puts the sampling sd of the strategy's mean gross
+  R at 0.0250 (momentum) and 0.0099 (reversal), against null sds of 0.0136 and 0.0072: 1.8 and 1.4
+  times larger. The permutation p-values are therefore too small for persistent rankings. This
+  changes no verdict, because both were near 0.5 and the correction can only raise them. It changes
+  what the test could see: scaled by these ratios, momentum's detectable gross excess is about 0.04R,
+  roughly equal to its cost, so momentum was only just within reach of an edge that paid for itself
+  (reversal, about 0.016R against a 0.040R cost, comfortably was). It also means a p-value just under
+  0.025 from this design would not have been trustworthy, and X0 could not have revealed that,
+  because its random assignments are drawn the same independent way as the null. A future ranking
+  test needs a null that keeps the persistence, such as permuting whole runs of weeks, or the
+  block-bootstrap spread as its yardstick.

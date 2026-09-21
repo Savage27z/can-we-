@@ -28,6 +28,9 @@ python -m research.run_backtest --all --workers 8 --exit plan --costs spread --o
 python -m research.validate --all --workers 11 --exit plan --costs spread --out-dir data/runs/my_validation
 python -m research.registry                                   # every run logged so far, and the trial count
 python -m research.preregistered s4_donchian_random           # apply the pre-registered decision rules
+
+# 5. Cross-sectional (16 currencies ranked against each other; the frozen experiment of stage 4b)
+python -m research.xs.run --workers 8 --out-dir data/runs/xs_frozen
 ```
 
 `--exit` is how a trade ends and `--costs` is what it costs; both matter (see below).
@@ -183,9 +186,33 @@ shown to make money after costs, and the only statistically significant effect (
 breakout's direction call) is about a hundredth of a risk unit per trade. The rules were
 pre-registered, so a failure here is a result, not a reason to loosen them.
 
+### Stage 4b: cross-sectional momentum and reversal, pre-registered (`PREREGISTRATION_XS.md`)
+
+The last test of price-based ideas. Each Monday 07:00 UTC, rank sixteen currencies (each against
+USD) by volatility-scaled past return, go long the top three and short the bottom three, and hold to
+the end of the period. Two strategies, fixed before the run: momentum (84 days back, hold 4 weeks)
+and reversal (7 days back, hold 1 week). Ranking skill is tested on gross R against a permutation
+null that assigns the legs at random; costs are judged separately.
+
+- **The controls passed** (random assignments 5.5% and 4.0% below p = 0.05; an oracle that knows the
+  outcome is detected at p = 0.0001), so the pipeline would have found a real ranking.
+- **Neither strategy is a candidate; all three rules fail for both.** Momentum: gross +0.004R per leg
+  (null +0.003R, p = 0.47), net -0.039R, interval [-0.086, +0.011]. Reversal: gross -0.001R (p = 0.49),
+  net -0.041R, interval [-0.060, -0.021]. Both lose about their cost (0.04R per leg) and nothing more.
+- **A flaw in the permutation null was found after the run** and is disclosed in the Outcome: it draws
+  each week independently, but real rankings persist, so its spread is 1.4 to 1.8 times too small
+  against the strategy's own. No verdict changes (both p-values were near 0.5) but a marginal pass
+  from this null would not have been trustworthy.
+- **The frozen stop rule applies.** With sweep/FVG, three stage 4 strategies and these two all failing,
+  the question of an edge in forex price data at intraday to monthly horizons is closed for this
+  data. Nothing further on FX price is run without a new hypothesis or new data.
+- Registry now: 13 configurations and 505 configuration-by-instrument tests (the two cross-sectional
+  configurations count 16 each; their controls are not counted).
+
 ## Not built yet
 
 Portfolio limits (a cap on simultaneous and correlated trades), tuning strategy parameters
 inside the walk-forward (every strategy so far has fixed, pre-registered parameters), strategies on
-information other than price (carry, macro), and any order execution. With no strategy having
-survived validation, there is nothing yet worth executing.
+information other than price (carry, macro; interest-rate history would be needed for carry), and
+any order execution. With no strategy having survived validation, there is nothing yet worth
+executing.
