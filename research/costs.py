@@ -17,6 +17,8 @@ trade's result, so a tight stop makes the same spread cost more R than a wide on
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 
 class MissingSpreadData(RuntimeError):
     pass
@@ -29,6 +31,9 @@ class NoCost:
 
     def price(self, spread: float, typical_spread: float, pip_size: float) -> float:
         return 0.0
+
+    def price_array(self, spread: np.ndarray, typical_spread: float, pip_size: float) -> np.ndarray:
+        return np.zeros(len(spread))
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,16 @@ class SpreadCost:
         elif not math.isnan(typical_spread):
             paid = typical_spread
         else:
+            raise MissingSpreadData(
+                "no spread data for this instrument, so trading costs cannot be applied; "
+                "re-fetch it with python -m data_pipeline.fetch_historical (candles fetched "
+                "before spread capture lack it) or run with costs 'none'")
+        return self.multiplier * paid + self.slippage_pips * pip_size
+
+    def price_array(self, spread: np.ndarray, typical_spread: float, pip_size: float) -> np.ndarray:
+        """price() for many trades at once, with the same fallback and the same error."""
+        paid = np.where(np.isnan(spread), typical_spread, spread)
+        if np.isnan(paid).any():
             raise MissingSpreadData(
                 "no spread data for this instrument, so trading costs cannot be applied; "
                 "re-fetch it with python -m data_pipeline.fetch_historical (candles fetched "
