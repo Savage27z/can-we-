@@ -3,7 +3,7 @@ against a candle's OPEN timestamp.
 
 Boundary convention (implementation decision, flagged for confirmation): the upper
 bound of each session is treated as INCLUSIVE of the candle opening exactly on the
-hour (hour <= end), not exclusive. Real H4 candles from OANDA land on a fixed
+hour (hour <= end), not exclusive. In summer, H4 candles from OANDA land on a
 01/05/09/13/17/21:00 UTC grid, so the 21:00 candle sits exactly on NY's stated
 "...-21:00" boundary — reading that as exclusive would silently drop every day's
 21:00 H4 candle from ever qualifying as a sweep/FVG/confirmation candle, and would
@@ -12,6 +12,11 @@ third FVG candle, idx 14, follows the 17:00 candle and so lands at 21:00). Treat
 the stated end hour as the last INCLUDED hour resolves this and matches the
 worked example; strategy_rules.md doesn't state inclusive/exclusive explicitly, so
 this is called out here rather than silently assumed.
+
+DST caveat: OANDA aligns Daily/H4 candles to 17:00 New York, so in winter the H4 grid is
+02/06/10/14/18/22:00 UTC and the 22:00 candle is outside both windows. The H4 filter
+therefore admits four candles a day in summer and three in winter (see strategy_rules.md
+§5). H1 candles are on the whole hour year-round and are unaffected.
 
 Takes pandas Series/Timestamps (not raw numpy datetime64) throughout — converting
 tz-aware pandas timestamps to numpy datetime64 silently drops/mishandles the tz in

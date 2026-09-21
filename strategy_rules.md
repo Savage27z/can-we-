@@ -1,6 +1,6 @@
 # Strategy Rules — Liquidity Sweep + FVG Reversal
 
-Version: 1.5 (trade-plan presentation overlay)
+Version: 1.6 (DST caveat in §5)
 Scope: mechanical, deterministic rules only. Every condition below must be evaluable as a
 pure function over OHLC(V) candle arrays and timestamps. No discretionary language.
 
@@ -25,6 +25,9 @@ pure function over OHLC(V) candle arrays and timestamps. No discretionary langua
   §§1-9 and every backtest result are unaffected.
 - v1.5: Added §11, how the live trade plan (entry, stop, target) is derived and how it
   differs from the backtest's close-based scoring. Presentation only; §§1-10 unchanged.
+- v1.6: Corrected §5's description of the H4 grid, which is fixed in UTC only in summer, and
+  documented the resulting summer/winter difference in the H4 session filter. No rule or
+  backtest result changed.
 
 ---
 
@@ -277,10 +280,20 @@ A candle qualifies as "in an active session" if its open timestamp (UTC) falls w
 - **London**: 07:00–16:00 UTC, or
 - **New York**: 12:00–21:00 UTC
 
-(Both bounds inclusive of the hour: a candle opening exactly at 16:00 or 21:00 counts. Real H4
-candles land on a fixed 01/05/09/13/17/21:00 UTC grid, so the 21:00 candle sits exactly on NY's
+(Both bounds inclusive of the hour: a candle opening exactly at 16:00 or 21:00 counts. In summer,
+H4 candles land on a 01/05/09/13/17/21:00 UTC grid, so the 21:00 candle sits exactly on NY's
 stated end — reading that boundary as exclusive would silently drop every day's 21:00 H4 candle
 and would also break this doc's own §8.1 worked example, whose FVG's third candle lands there.)
+
+**DST caveat (found by the data-quality grid check, v1.6):** OANDA aligns its Daily and H4 candles
+to 17:00 New York time, not to a fixed UTC hour. In winter (US standard time) the H4 grid is
+therefore 02/06/10/14/18/22:00 UTC and the Daily candle opens at 22:00 UTC rather than 21:00. The
+session windows above are fixed in UTC, so the H4 session filter admits four candles a day in
+summer (09, 13, 17, 21) but only three in winter (10, 14, 18): the candle opening at 17:00 New York
+qualifies in summer and not in winter. H1 candles sit on the whole hour in both seasons and are
+unaffected. This is a real inconsistency in the rule as specified, left unchanged so that every
+backtest result stays comparable; a DST-aware session definition would be a strategy change to
+test on its own.
 
 This applies to: the **sweep candle** (1.3) and the **confirmation candle** (1.8) — each must
 independently open within an active session, or that step is disqualified (sweep discarded, or
