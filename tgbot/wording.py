@@ -2,17 +2,17 @@
 footer on every report and the replies that mention the rules cannot drift apart.
 
 The claim is bounded by the research (research/README.md): across 65 pairs and 21 years the sweep/FVG
-rules did not beat random entries, and EUR_USD, the one live pair, is positive but on too few trades
-(116) to tell skill from luck. So a report is an analysis of what the rules say, not a signal, and
-says no more than that.
+rules did not beat random entries, and no live pair's record is long enough to tell skill from luck
+either way. So a report is an analysis of what the rules say, not a signal, and says no more than
+that.
 """
 
 ALERT_HEADER = "🔔 New setup confirmed by the rules (analysis, not a trade signal)"
 
 NOTICE = (
     "ℹ️ This is a mechanical read of fixed rules, not a recommendation. Tested across 21 years of "
-    "forex history, the rules did not beat random entries, and EUR_USD's record is too short to "
-    "tell skill from luck. Not financial advice."
+    "forex history, the rules did not beat random entries, and no pair's live record is long enough "
+    "to tell skill from luck. Not financial advice."
 )
 
 ALERTS_LINE = "Pushed when a new setup confirms (paused around high-impact news). Analysis, not signals."
