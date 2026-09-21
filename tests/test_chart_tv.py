@@ -55,6 +55,11 @@ class BuildSpecTests(unittest.TestCase):
         self.assertIn("2.4R", notes)
         self.assertTrue(all(not z.get("dashed") for z in zones))
 
+    def test_the_page_is_themed_from_the_spec(self):
+        candles, spec = spec_for()
+        self.assertEqual(spec["theme"]["bg"], "#ffffff")
+        self.assertEqual(spec["theme"]["text"], "#131722")
+
     def test_a_waiting_trades_zones_are_dashed_and_marked_as_a_plan(self):
         candles = make_candles()
         setup = make_setup(candles, "pending_confirmation")

@@ -22,7 +22,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .chart import (MIN_ZONE_FOR_TEXT, PLAN_ALPHA, POSITION_ALPHA, _zone_text, BIAS_COLORS, BUY_SIDE, DOWN, MAX_LIQUIDITY_LINES, MAX_SETUPS_DRAWN,
+from .chart import (AXIS, BG, GRID, MIN_ZONE_FOR_TEXT, MUTED, PLAN_ALPHA, POSITION_ALPHA, _zone_text, BIAS_COLORS, BUY_SIDE, DOWN, MAX_LIQUIDITY_LINES, MAX_SETUPS_DRAWN,
                     RIGHT_PADDING_SLOTS, SELL_SIDE, SWEEP, TEXT, UP, _decimals, _position,
                     _position_containing, _status_line)
 from .state import ActiveSetup, LiveState
@@ -114,6 +114,7 @@ def build_spec(candles: pd.DataFrame, state: LiveState) -> dict:
 
     last = candles.iloc[-1]
     return {
+        "theme": {"bg": BG, "grid": GRID, "axis": AXIS, "text": TEXT, "muted": MUTED},
         "n": n, "pad": RIGHT_PADDING_SLOTS, "decimals": decimals,
         "y_lo": float(y_lo), "y_hi": float(y_hi),
         "candles": [{"time": _unix(t), "open": float(o), "high": float(h), "low": float(l),
@@ -159,7 +160,7 @@ def _setup_spec(setup: ActiveSetup, times: pd.Series, n: int, fmt, lines: list, 
 
     if setup.status == "pending_confirmation" and setup.confirmation_level is not None:
         sign = ">" if bullish else "<"
-        _level_spec(setup.confirmation_level, "#ffffff", "dotted", 1.5,
+        _level_spec(setup.confirmation_level, TEXT, "dotted", 1.5,
                     f"Confirm {sign} {fmt(setup.confirmation_level)}", lines, labels)
         plan = setup.plan
         if plan is not None:
