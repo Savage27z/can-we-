@@ -97,7 +97,8 @@ def _provisional_target(market: MarketData, result: SetupResult, as_of: pd.Times
     if h4_ref_index < 0:
         return None
     level = select_target(market, result.direction, result.sweep_index,
-                          result.fvg.confirmation_level, h4_ref_index)
+                          result.fvg.confirmation_level, h4_ref_index,
+                          h1_consumed_through=as_of)
     return level.level if level is not None else None
 
 
@@ -130,8 +131,10 @@ def _liquidity_map(market: MarketData, as_of: pd.Timestamp, current_price: float
 
 def compute_state_from_market(market: MarketData, news: Optional[NewsStatus] = None) -> LiveState:
     events = find_sweep_events(market)
-    # The live bot applies the §5 (v1.7) rollover rule; the backtest default does not.
-    results = [evaluate_setup(market, direction, idx, no_entry_hours=rules.NO_ENTRY_HOURS_UTC)
+    # The live bot applies the §5 (v1.7) rollover rule and the v1.8 plan exits / H1 target
+    # mitigation; the backtest defaults do not (see evaluate_setup).
+    results = [evaluate_setup(market, direction, idx, no_entry_hours=rules.NO_ENTRY_HOURS_UTC,
+                              plan_exits=True, h1_mitigation=True)
                for idx, direction in events]
     active = [r for r in results if r.outcome in OUTCOMES_PENDING]
 
