@@ -10,9 +10,12 @@ log = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# Only pairs that passed the Phase 2 backtest gate (EUR_USD: +0.34R expectancy over
-# 8 years; GBP_USD and USD_JPY were negative). Serving the others would present
-# setups the backtest says lose money as if they were vetted signals.
+# The pair the bot serves. It was picked because it was the one positive result in the original
+# backtest (EUR_USD +0.34R on the strategy's own scoring; GBP_USD and USD_JPY were negative).
+# The later validation (research/README.md) does not call that an edge: EUR_USD's 116 trades
+# are too few to tell from luck, and across 65 pairs the rules did not beat random entries.
+# So this is the pair the strategy was built around, not a vetted one, and the pairs that did
+# worse stay off.
 LIVE_PAIRS = ["EUR_USD"]
 DEFAULT_PAIR = LIVE_PAIRS[0]
 
