@@ -183,6 +183,24 @@ class StaleDataTests(unittest.TestCase):
         service, _ = make_service(lambda s: "NARRATED READ")
         self.assertIn("Data as of Tue 22 Sep 15:00 UTC", service.get_report("EUR_USD"))
 
+    def test_every_report_links_to_the_live_tradingview_chart(self):
+        from tgbot.wording import tradingview_url
+
+        service, _ = make_service(lambda s: "NARRATED READ")
+        self.assertIn("Live chart: " + tradingview_url("EUR_USD"), service.get_report("EUR_USD"))
+
+    def test_a_stale_report_links_to_it_too(self):
+        clock = Clock()
+        clock.now += timedelta(hours=24)
+        service, _ = make_service(lambda s: "x", clock)
+        self.assertIn("tradingview.com/chart/?symbol=OANDA%3AEURUSD", service.get_report("EUR_USD"))
+
+    def test_the_link_uses_the_oanda_feed_and_the_pairs_symbol(self):
+        from tgbot.wording import tradingview_url
+
+        self.assertEqual(tradingview_url("USD_JPY"),
+                         "https://www.tradingview.com/chart/?symbol=OANDA%3AUSDJPY&interval=60")
+
     def test_a_stale_report_is_retried_soon(self):
         clock = Clock()
         clock.now += timedelta(hours=24)

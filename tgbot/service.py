@@ -18,7 +18,7 @@ from live.state import LiveState, compute_current_state
 from narration.generate import narrate_state
 
 from . import config
-from .wording import NOTICE
+from .wording import NOTICE, tradingview_url
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,15 @@ def _refresh_live_history(pair: str) -> None:
 
 
 def _default_chart(state: LiveState) -> Optional[bytes]:
-    return render_chart(load_candles(state.pair), state)
+    candles = load_candles(state.pair)
+    if config.CHART_RENDERER == "tradingview":
+        try:
+            from live.chart_tv import render_chart_tv   # optional dependency: imported lazily
+            return render_chart_tv(candles, state)
+        except Exception as err:
+            log.warning("TradingView chart failed for %s, using the matplotlib chart: %s",
+                        state.pair, err)
+    return render_chart(candles, state)
 
 
 @dataclass
@@ -42,6 +50,12 @@ class _CachedReport:
     analysis: Analysis
     built_at: datetime
     ttl: timedelta
+
+
+def _header(state: LiveState) -> str:
+    """When the data is from and where to see the live chart, at the top of every report."""
+    return (f"🕒 Data as of {when(state.as_of)}\n"
+            f"📈 Live chart: {tradingview_url(state.pair)}\n\n")
 
 
 def stale_text(state: LiveState) -> str:
@@ -125,7 +139,7 @@ class ReportService:
         if is_stale(datetime.fromisoformat(state.as_of), self._clock(), config.MAX_DATA_AGE):
             log.warning("%s data is stale (as of %s); not rendering a trade plan",
                         state.pair, state.as_of)
-            return stale_text(state) + SEPARATOR + NOTICE, False
+            return _header(state) + stale_text(state) + SEPARATOR + NOTICE, False
         body, narrated = self._narrated_body(state)
         try:
             plan = plan_text(state)
@@ -134,7 +148,7 @@ class ReportService:
                           state.pair)
             plan = ""
         text = plan + SEPARATOR + body if plan else body
-        return f"🕒 Data as of {when(state.as_of)}\n\n" + text + SEPARATOR + NOTICE, narrated
+        return _header(state) + text + SEPARATOR + NOTICE, narrated
 
     def render(self, state: LiveState) -> str:
         return self._render(state)[0]

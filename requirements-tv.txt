@@ -1,0 +1,4 @@
+# Optional: the TradingView (Lightweight Charts) chart renderer, CHART_RENDERER=tradingview.
+# Not installed in the production image. Playwright drives a Chromium/Chrome build:
+# `playwright install chromium`, or set CHART_BROWSER_CHANNEL=chrome to use an installed Chrome.
+playwright>=1.45

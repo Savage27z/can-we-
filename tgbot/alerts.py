@@ -30,7 +30,7 @@ from live.state import ActiveSetup, LiveState
 from news.filter import check_news
 
 from . import config
-from .messages import split_message
+from .messages import NO_LINK_PREVIEW, split_message
 from .service import ReportService
 from .wording import ALERT_HEADER
 
@@ -149,7 +149,8 @@ async def _send(bot, chat_id: int, text: str, photo: Optional[bytes] = None) -> 
             log.exception("could not send the alert chart to chat %s; sending text only", chat_id)
     for chunk in split_message(text):
         try:
-            await bot.send_message(chat_id=chat_id, text=chunk)
+            await bot.send_message(chat_id=chat_id, text=chunk,
+                                   link_preview_options=NO_LINK_PREVIEW)
         except Forbidden:
             log.warning("chat %s has blocked the bot; not retrying", chat_id)
             return True

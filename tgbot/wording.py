@@ -26,5 +26,12 @@ PROFILE_DESCRIPTION = (
 )
 
 
+def tradingview_url(pair: str) -> str:
+    """The live TradingView chart for the pair, on OANDA's feed, at H1. The bot's own picture
+    shows what the rules found; this is the interactive chart to read it against."""
+    base, quote = pair.split("_")
+    return f"https://www.tradingview.com/chart/?symbol=OANDA%3A{base}{quote}&interval=60"
+
+
 def not_enabled(pair: str, enabled: list[str]) -> str:
     return f"{pair} isn't enabled. This bot covers {', '.join(enabled)} only."

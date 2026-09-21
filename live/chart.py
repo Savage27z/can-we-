@@ -37,10 +37,11 @@ FONT_TICK = 12
 FONT_LABEL = 13
 FONT_NOTE = 10
 
-BG = "#0d1117"
-GRID = "#1c2330"
-TEXT = "#c9d1d9"
-MUTED = "#8b949e"
+# TradingView's dark-theme palette, so the picture reads like the chart people already know.
+BG = "#131722"
+GRID = "#232733"
+TEXT = "#d1d4dc"
+MUTED = "#787b86"
 UP = "#26a69a"
 DOWN = "#ef5350"
 SWEEP = "#e3b341"
@@ -164,9 +165,9 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
     # Candles
     x = np.arange(n)
     colors = np.where(closes >= opens, UP, DOWN)
-    ax.vlines(x, lows, highs, colors=colors, linewidth=1.3, zorder=3)
+    ax.vlines(x, lows, highs, colors=colors, linewidth=1.1, zorder=3)
     body = np.maximum(np.abs(closes - opens), (y_hi - y_lo) * 0.0006)
-    ax.bar(x, body, bottom=np.minimum(opens, closes), width=0.66, color=colors, zorder=4)
+    ax.bar(x, body, bottom=np.minimum(opens, closes), width=0.7, color=colors, zorder=4)
 
     tick_positions = list(range(0, n, 12))
     ax.set_xticks(tick_positions)
@@ -190,9 +191,15 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
         _draw_setup(ax, setup, times, line_end, fmt, labels, y_hi - y_lo)
 
     # Current price
-    ax.hlines(state.current_price, 0, line_end, colors=TEXT, linestyles="--",
-              linewidth=1.0, alpha=0.6, zorder=2)
     price_color = UP if closes[-1] >= opens[-1] else DOWN
+    ax.hlines(state.current_price, 0, line_end, colors=price_color, linestyles=":",
+              linewidth=1.2, alpha=0.9, zorder=2)
+    # TradingView-style legend: the last closed H4 candle's O/H/L/C, coloured by its direction.
+    # (Labelled as such: the price tag is the newer H1 close, so the two can differ.)
+    fig.text(0.03, 0.848,
+             "Last closed 4h:  O {0}  H {1}  L {2}  C {3}".format(
+                 *(format(v, fmt) for v in (opens[-1], highs[-1], lows[-1], closes[-1]))),
+             color=price_color, fontsize=FONT_TICK, va="center", ha="left")
     # The price tag sits on the axis edge (x in axes units, y in price), over the tick
     # labels, so it can never collide with the level labels inside the plot.
     ax.text(1.005, state.current_price, format(state.current_price, fmt), color="white",
@@ -206,7 +213,7 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
 
     # Header
     pair_label = state.pair.replace("_", "")
-    fig.text(0.03, 0.945, f"{pair_label}  ·  H4", color=TEXT, fontsize=FONT_TITLE,
+    fig.text(0.03, 0.945, f"{pair_label}  ·  4h  ·  OANDA", color=TEXT, fontsize=FONT_TITLE,
              fontweight="bold", ha="left", va="center")
     fig.text(0.03, 0.885, _status_line(state), color=MUTED, fontsize=FONT_SUBTITLE,
              ha="left", va="center")

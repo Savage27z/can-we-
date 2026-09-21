@@ -148,6 +148,12 @@ class AnalysisTests(unittest.TestCase):
         run(handlers.analysis(update, make_context()))
         self.assertEqual(replies(update), ["REPORT for EUR_USD"])
 
+    def test_the_report_is_sent_without_a_link_preview_card(self):
+        update = make_update()
+        run(handlers.analysis(update, make_context()))
+        for call in update.effective_message.reply_text.await_args_list:
+            self.assertTrue(call.kwargs["link_preview_options"].is_disabled)
+
     def test_accepts_flexible_pair_spelling(self):
         update = make_update()
         run(handlers.analysis(update, make_context(args=["$eurusd"])))
@@ -205,7 +211,7 @@ class ChartDeliveryTests(unittest.TestCase):
         order = []
         update = make_update()
         update.effective_message.reply_photo.side_effect = lambda **kw: order.append("photo")
-        update.effective_message.reply_text.side_effect = lambda text: order.append("text")
+        update.effective_message.reply_text.side_effect = lambda text, **kwargs: order.append("text")
         run(handlers.analysis(update, make_context(chart=b"PNG")))
         self.assertEqual(order, ["photo", "text"])
         update.effective_message.reply_photo.assert_awaited_once_with(photo=b"PNG")

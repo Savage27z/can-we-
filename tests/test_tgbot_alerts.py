@@ -238,6 +238,11 @@ class AlertJobTests(unittest.TestCase):
         self.assertIn("REPORT", send.await_args.kwargs["text"])
         self.assertEqual(len(self.log.load()), 2)
 
+    def test_alert_text_is_sent_without_a_link_preview_card(self):
+        send = AsyncMock()
+        self.run_job(make_bot(send), chat_ids="111")
+        self.assertTrue(send.await_args.kwargs["link_preview_options"].is_disabled)
+
     def test_a_second_cycle_does_not_resend(self):
         send = AsyncMock()
         self.run_job(make_bot(send), times=2)
@@ -251,21 +256,21 @@ class AlertJobTests(unittest.TestCase):
         self.assertEqual(send.await_count, 2)
 
     def test_only_the_chat_that_failed_is_retried(self):
-        async def first_cycle_send(chat_id, text):
+        async def first_cycle_send(chat_id, text, **kwargs):
             if chat_id == 111:
                 raise RuntimeError("timeout")
 
         self.run_job(make_bot(first_cycle_send))
         retry_targets = []
 
-        async def second_cycle_send(chat_id, text):
+        async def second_cycle_send(chat_id, text, **kwargs):
             retry_targets.append(chat_id)
 
         self.run_job(make_bot(second_cycle_send))
         self.assertEqual(retry_targets, [111])  # 222 already had it; no duplicate
 
     def test_a_blocked_chat_is_not_retried_forever(self):
-        async def blocked(chat_id, text):
+        async def blocked(chat_id, text, **kwargs):
             raise Forbidden("bot was blocked by the user")
 
         self.run_job(make_bot(blocked), chat_ids="111")
@@ -278,7 +283,7 @@ class AlertJobTests(unittest.TestCase):
         self.render_text = "\n".join(["line " * 20] * 200)  # ~20k characters
         sent = []
 
-        async def strict_send(chat_id, text):
+        async def strict_send(chat_id, text, **kwargs):
             if len(text) > 4096:
                 raise RuntimeError("Message is too long")
             sent.append(text)
@@ -291,7 +296,7 @@ class AlertJobTests(unittest.TestCase):
         # The startup job and the hourly job are separate scheduler jobs and can overlap.
         sent = []
 
-        async def slow_send(chat_id, text):
+        async def slow_send(chat_id, text, **kwargs):
             await asyncio.sleep(0.01)
             sent.append(chat_id)
 
@@ -311,7 +316,7 @@ class AlertJobTests(unittest.TestCase):
         async def photo(chat_id, photo):
             order.append("photo")
 
-        async def text(chat_id, text):
+        async def text(chat_id, text, **kwargs):
             order.append("text")
 
         self.run_job(make_bot(text, send_photo=photo), chat_ids="111")
