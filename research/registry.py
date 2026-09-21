@@ -21,7 +21,7 @@ from typing import Optional
 
 from data_pipeline import config
 
-KINDS = ("backtest", "validation")
+KINDS = ("backtest", "validation", "crosssection")
 
 
 def registry_path(directory: Optional[Path] = None) -> Path:
@@ -93,7 +93,10 @@ def trial_counts(directory: Optional[Path] = None, strategy: Optional[str] = Non
     """{'runs', 'configs', 'pair_tests'}: how many runs, how many distinct configurations, and
     how many configuration-by-instrument tests have been looked at. Re-running a configuration
     is not a new hypothesis; testing it on a new instrument is."""
-    runs = [r for r in load_runs(directory) if strategy is None or r["strategy"] == strategy]
+    # A control (a check that the machinery works) is not a hypothesis about an edge, so it is
+    # not a look at the data in the sense the trial count exists to track.
+    runs = [r for r in load_runs(directory)
+            if (strategy is None or r["strategy"] == strategy) and not r.get("control")]
     tested: dict[tuple, set] = {}
     for run in runs:
         tested.setdefault(config_key(run), set()).update(run.get("instruments", []))
