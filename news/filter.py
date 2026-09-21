@@ -79,13 +79,16 @@ def _view(event, now: datetime) -> NewsEventView:
     )
 
 
-def evaluate(calendar: Calendar, pair: str, now: datetime) -> NewsStatus:
+def evaluate(calendar: Calendar, pair: str, now: datetime,
+             clock: Optional[datetime] = None) -> NewsStatus:
+    """`now` is the moment judged; `clock` (default `now`) is the wall clock the
+    calendar's age is measured against."""
     fetched_at = calendar.fetched_at.isoformat()
     if not calendar.events:
         return NewsStatus(status="unavailable", reason="calendar contains no events",
                           calendar_fetched_at=fetched_at)
 
-    age = now - calendar.fetched_at
+    age = (clock or now) - calendar.fetched_at
     if age > MAX_CALENDAR_AGE:
         return NewsStatus(
             status="unavailable",
@@ -123,11 +126,17 @@ def evaluate(calendar: Calendar, pair: str, now: datetime) -> NewsStatus:
     )
 
 
-def check_news(pair: str, now: Optional[datetime] = None) -> NewsStatus:
+def check_news(pair: str, now: Optional[datetime] = None,
+               at: Optional[datetime] = None) -> NewsStatus:
+    """`now` is the wall clock: it drives calendar caching and freshness. `at` is the
+    moment being judged (default: `now`), e.g. an earlier candle's confirmation time.
+    Keeping them apart stops a historical `at` from discarding a good cache or
+    stamping it with the wrong retrieval time."""
     now = now or datetime.now(timezone.utc)
+    at = at or now
     relevant_currencies(pair)  # validate the pair up front, before any network call
     try:
-        return evaluate(load_calendar(now), pair, now)
+        return evaluate(load_calendar(now), pair, at, clock=now)
     except NewsFeedError as err:
         return NewsStatus(status="unavailable", reason=str(err))
     except Exception as err:

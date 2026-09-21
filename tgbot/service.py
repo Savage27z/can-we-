@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from live.chart import load_candles, render_chart
+from live.freshness import is_stale
 from live.plan import SEPARATOR, plan_text, when
 from live.refresh import refresh_pair
 from live.state import LiveState, compute_current_state
@@ -41,6 +42,15 @@ class _CachedReport:
     analysis: Analysis
     built_at: datetime
     ttl: timedelta
+
+
+def stale_text(state: LiveState) -> str:
+    """Shown instead of a plan when the snapshot is too old to act on: a plan built
+    from it would tell the reader to enter at a price that may be long gone."""
+    return (f"⚠️ STALE DATA — the newest candle closed {when(state.as_of)}, longer ago than "
+            f"the market being open explains. Nothing here is current, so no trade plan "
+            f"is shown.\n\nLast known: {state.pair} at {state.current_price}, "
+            f"daily bias {state.daily_bias.upper()}, as of {when(state.as_of)}.")
 
 
 def fallback_text(state: LiveState) -> str:
@@ -112,6 +122,10 @@ class ReportService:
         The plan is computed by the engine, not the narration model, so it is still
         there when narration falls back; and if rendering it ever fails, the read is
         still sent."""
+        if is_stale(datetime.fromisoformat(state.as_of), self._clock(), config.MAX_DATA_AGE):
+            log.warning("%s data is stale (as of %s); not rendering a trade plan",
+                        state.pair, state.as_of)
+            return stale_text(state) + SEPARATOR + NOTICE, False
         body, narrated = self._narrated_body(state)
         try:
             plan = plan_text(state)
@@ -120,7 +134,7 @@ class ReportService:
                           state.pair)
             plan = ""
         text = plan + SEPARATOR + body if plan else body
-        return text + SEPARATOR + NOTICE, narrated
+        return f"🕒 Data as of {when(state.as_of)}\n\n" + text + SEPARATOR + NOTICE, narrated
 
     def render(self, state: LiveState) -> str:
         return self._render(state)[0]

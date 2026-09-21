@@ -168,11 +168,38 @@ class AnalysisChartTests(unittest.TestCase):
         self.assertIsNone(service.chart_for(make_state()))
 
 
+class StaleDataTests(unittest.TestCase):
+    def test_a_day_old_snapshot_is_never_offered_as_a_live_entry(self):
+        clock = Clock()
+        clock.now += timedelta(hours=24)   # the state's as_of is 24h behind the clock
+        service, _ = make_service(lambda s: "NARRATED READ", clock)
+        text = service.get_report("EUR_USD")
+        self.assertIn("STALE DATA", text)
+        self.assertNotIn("TRADE PLAN", text)
+        self.assertNotIn("at market", text)
+        self.assertNotIn("NARRATED READ", text)
+
+    def test_a_fresh_report_states_the_snapshot_time(self):
+        service, _ = make_service(lambda s: "NARRATED READ")
+        self.assertIn("Data as of Tue 22 Sep 15:00 UTC", service.get_report("EUR_USD"))
+
+    def test_a_stale_report_is_retried_soon(self):
+        clock = Clock()
+        clock.now += timedelta(hours=24)
+        service, calls = make_service(lambda s: "x", clock)
+        service.get_report("EUR_USD")
+        clock.now += config.FALLBACK_CACHE_TTL + timedelta(seconds=1)
+        service.get_report("EUR_USD")
+        self.assertEqual(calls["compute"], 2)
+
+
 class TradePlanInReportTests(unittest.TestCase):
     def test_the_plan_comes_first_then_the_structural_read(self):
         service, _ = make_service(lambda s: "NARRATED READ")
         text = service.get_report("EUR_USD")
-        self.assertTrue(text.startswith("🎯 TRADE PLAN"))
+        self.assertTrue(text.startswith("🕒 Data as of"))
+        self.assertTrue(body_of(text) == "NARRATED READ")
+        self.assertLess(text.index("Data as of"), text.index("TRADE PLAN"))
         self.assertIn("Stop-loss: 1.14500", text)
         self.assertIn("Take-profit: 1.15000", text)
         self.assertEqual(body_of(text), "NARRATED READ")
@@ -193,7 +220,8 @@ class TradePlanInReportTests(unittest.TestCase):
         service, _ = make_service(lambda s: "NARRATED READ")
         with patch("tgbot.service.plan_text", side_effect=RuntimeError("bug")):
             text = service.get_report("EUR_USD")
-        self.assertEqual(text, "NARRATED READ" + SEPARATOR + NOTICE)   # no plan, but read and notice
+        self.assertNotIn("TRADE PLAN", text)
+        self.assertTrue(text.endswith("NARRATED READ" + SEPARATOR + NOTICE))   # no plan, but read and notice
 
     def test_alerts_render_the_same_report_including_the_plan(self):
         service, _ = make_service(lambda s: "NARRATED READ")
