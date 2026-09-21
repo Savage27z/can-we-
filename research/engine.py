@@ -7,12 +7,13 @@ Portfolio limits (one trade at a time, a cap on correlated exposure) are a separ
 """
 import math
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from backtest import rules
-from data_pipeline import storage
+from data_pipeline import quality, storage
 
 from .exits import Candles, ExitPolicy
 from .strategy import BULLISH, Signal, Strategy
@@ -37,12 +38,47 @@ class InstrumentRun:
     funnel: dict
     months_spanned: float
     spread_fallbacks: int = 0     # trades whose entry candle had no spread, so the typical one was used
+    data_from: Optional[pd.Timestamp] = None    # first H1 candle used
+    data_to: Optional[pd.Timestamp] = None      # last H1 candle used
 
 
-def load_frames(instrument: str, timeframes: tuple[str, ...]) -> dict[str, pd.DataFrame]:
-    """The stored candle frames a strategy asked for, plus the H1 execution frame."""
+DAILY_WARMUP = pd.Timedelta(days=14)
+
+
+@dataclass(frozen=True)
+class Window:
+    """The part of the stored history a run may use. Sweeps come from H4 and their
+    confirmation from H1, so both must begin where the LATER of them is dense; the Daily
+    frame only supplies bias, so it may begin a little earlier, as warm-up."""
+    start: pd.Timestamp
+    daily_start: pd.Timestamp
+
+
+def window_from_start(start: pd.Timestamp) -> Window:
+    return Window(start=start, daily_start=start - DAILY_WARMUP)
+
+
+def usable_window(instrument: str, timeframes: tuple[str, ...]) -> Optional[Window]:
+    """The instrument's dense history across `timeframes`, or None if it has none."""
+    starts = quality.usable_windows(instrument, tuple(dict.fromkeys((*timeframes, EXECUTION_FRAME))))
+    if starts is None:
+        return None
+    start = max(starts.values())
+    daily = max(starts["D"], start - DAILY_WARMUP) if "D" in starts else start
+    return Window(start=start, daily_start=daily)
+
+
+def load_frames(instrument: str, timeframes: tuple[str, ...],
+                window: Optional[Window] = None) -> dict[str, pd.DataFrame]:
+    """The stored candle frames a strategy asked for, plus the H1 execution frame,
+    optionally cut to a window of reliable data."""
     wanted = dict.fromkeys((*timeframes, EXECUTION_FRAME))      # unique, in order
-    return {tf: storage.load(instrument, tf).reset_index(drop=True) for tf in wanted}
+    frames = {tf: storage.load(instrument, tf) for tf in wanted}
+    if window is not None:
+        for tf, df in frames.items():
+            begins = window.daily_start if tf == "D" else window.start
+            frames[tf] = df[df["time"] >= begins]
+    return {tf: df.reset_index(drop=True) for tf, df in frames.items()}
 
 
 def simulate(signals: list[Signal], h1: pd.DataFrame, exit_policy: ExitPolicy, cost_model,
@@ -98,11 +134,16 @@ def simulate(signals: list[Signal], h1: pd.DataFrame, exit_policy: ExitPolicy, c
 
 
 def run_instrument(strategy: Strategy, instrument: str, exit_policy: ExitPolicy, cost_model,
-                   frames: dict[str, pd.DataFrame] | None = None) -> InstrumentRun:
-    frames = frames if frames is not None else load_frames(instrument, strategy.timeframes)
+                   frames: dict[str, pd.DataFrame] | None = None,
+                   window: Optional[Window] = None) -> InstrumentRun:
+    frames = frames if frames is not None else load_frames(instrument, strategy.timeframes, window)
+    h1 = frames[EXECUTION_FRAME]
+    if h1.empty:
+        raise ValueError(f"{instrument}: no H1 candles in the requested window")
     output = strategy.generate(instrument, frames)
-    trades, fallbacks = simulate(output.signals, frames[EXECUTION_FRAME], exit_policy,
-                                 cost_model, instrument, strategy.name)
+    trades, fallbacks = simulate(output.signals, h1, exit_policy, cost_model, instrument,
+                                 strategy.name)
     return InstrumentRun(instrument=instrument, strategy=strategy.name, exit=exit_policy.name,
                          costs=cost_model.name, trades=trades, funnel=dict(output.funnel),
-                         months_spanned=output.months_spanned, spread_fallbacks=fallbacks)
+                         months_spanned=output.months_spanned, spread_fallbacks=fallbacks,
+                         data_from=h1["time"].iloc[0], data_to=h1["time"].iloc[-1])
