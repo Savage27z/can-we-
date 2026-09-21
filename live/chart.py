@@ -11,6 +11,7 @@ so the canvas is kept small (1000x620) and the fonts large; text that reads fine
 1280px canvas is unreadable in the bubble.
 """
 import io
+import os
 from typing import Optional
 
 import numpy as np
@@ -37,16 +38,22 @@ FONT_TICK = 12
 FONT_LABEL = 13
 FONT_NOTE = 10
 
-# TradingView's dark-theme palette, so the picture reads like the chart people already know.
-BG = "#131722"
-GRID = "#232733"
-TEXT = "#d1d4dc"
-MUTED = "#787b86"
-UP = "#26a69a"
-DOWN = "#ef5350"
-SWEEP = "#e3b341"
-BUY_SIDE = "#d29922"
-SELL_SIDE = "#58a6ff"
+# TradingView's two themes, so the picture reads like the chart people already know. Light is
+# the default (it is TradingView's own default); CHART_THEME=dark switches to the dark one.
+PALETTES = {
+    "light": {"BG": "#ffffff", "GRID": "#f0f3fa", "AXIS": "#e0e3eb", "TEXT": "#131722",
+              "MUTED": "#787b86", "UP": "#089981", "DOWN": "#f23645", "SWEEP": "#e08a00",
+              "BUY_SIDE": "#b7791f", "SELL_SIDE": "#2962ff"},
+    "dark": {"BG": "#131722", "GRID": "#232733", "AXIS": "#232733", "TEXT": "#d1d4dc",
+             "MUTED": "#787b86", "UP": "#26a69a", "DOWN": "#ef5350", "SWEEP": "#e3b341",
+             "BUY_SIDE": "#d29922", "SELL_SIDE": "#58a6ff"},
+}
+THEME = os.environ.get("CHART_THEME", "light").strip().lower()
+if THEME not in PALETTES:
+    THEME = "light"
+BG, GRID, AXIS, TEXT, MUTED, UP, DOWN, SWEEP, BUY_SIDE, SELL_SIDE = (
+    PALETTES[THEME][k] for k in ("BG", "GRID", "AXIS", "TEXT", "MUTED", "UP", "DOWN", "SWEEP",
+                                 "BUY_SIDE", "SELL_SIDE"))
 BIAS_COLORS = {"bullish": "#238636", "bearish": "#da3633", "neutral": "#6e7681"}
 STATUS_LABELS = {
     "pending_fvg": "awaiting FVG",
@@ -157,7 +164,7 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
     ax.grid(True, color=GRID, linewidth=0.6)
     ax.set_axisbelow(True)
     for spine in ax.spines.values():
-        spine.set_color(GRID)
+        spine.set_color(AXIS)
     ax.tick_params(colors=MUTED, labelsize=FONT_TICK)
     ax.yaxis.tick_right()
     ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
@@ -320,10 +327,10 @@ def _draw_setup(ax, setup: ActiveSetup, times: pd.Series, line_end: float,
     # Waiting for confirmation: the level a close must cross.
     if setup.status == "pending_confirmation" and setup.confirmation_level is not None:
         ax.hlines(setup.confirmation_level, fvg_pos if fvg_pos is not None else start, line_end,
-                  colors="white", linestyles=":", linewidth=1.5, zorder=3)
+                  colors=TEXT, linestyles=":", linewidth=1.5, zorder=3)
         sign = ">" if bullish else "<"
         labels.append((setup.confirmation_level,
-                       f"Confirm {sign} {format(setup.confirmation_level, fmt)}", "white"))
+                       f"Confirm {sign} {format(setup.confirmation_level, fmt)}", TEXT))
         # The planned trade, dashed so it can't be mistaken for one that is live.
         plan = setup.plan
         if plan is not None:

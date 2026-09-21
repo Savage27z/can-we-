@@ -172,6 +172,41 @@ class LegibilityTests(unittest.TestCase):
         self.assertEqual(img.size[0], int(chart.FIG_SIZE[0] * chart.DPI))  # renders, no error
 
 
+class ThemeTests(unittest.TestCase):
+    def test_light_is_the_default_like_tradingviews_own(self):
+        self.assertEqual(chart.THEME, "light")
+        self.assertEqual(chart.BG, "#ffffff")
+
+    def test_both_palettes_define_every_colour(self):
+        self.assertEqual(set(chart.PALETTES["light"]), set(chart.PALETTES["dark"]))
+
+    def test_the_default_chart_has_a_white_background_and_dark_text(self):
+        c = make_candles()
+        img = decode(chart.render_chart(c, make_state(c))).convert("RGB")
+        self.assertEqual(img.getpixel((2, 2)), (255, 255, 255))
+        darkest = img.crop((20, 10, 500, 60)).convert("L").getextrema()[0]
+        self.assertLess(darkest, 60)           # the title is drawn dark on the white
+
+    def test_level_colours_are_dark_enough_to_read_on_white(self):
+        light = chart.PALETTES["light"]
+        for name in ("TEXT", "UP", "DOWN", "SWEEP", "BUY_SIDE", "SELL_SIDE"):
+            r, g, b = (int(light[name][i:i + 2], 16) for i in (1, 3, 5))
+            luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            self.assertLess(luminance, 175, name)
+
+    def test_an_unknown_theme_falls_back_to_light(self):
+        import importlib
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"CHART_THEME": "neon"}):
+            reloaded = importlib.reload(chart)
+        try:
+            self.assertEqual(reloaded.THEME, "light")
+        finally:
+            importlib.reload(chart)
+
+
 class PositionZoneTests(unittest.TestCase):
     """The green target zone and red stop zone, like TradingView's position tool."""
 

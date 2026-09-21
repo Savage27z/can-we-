@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; padding: 0; background: #131722; width: 1000px; height: 620px;
-               overflow: hidden; color: #d1d4dc;
+  html, body { margin: 0; padding: 0; background: var(--bg, #ffffff); width: 1000px; height: 620px;
+               overflow: hidden; color: var(--text, #131722);
                font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .abs { position: absolute; white-space: nowrap; }
   #title { left: 30px; top: 12px; font-size: 30px; font-weight: 700; line-height: 36px; }
-  #status { left: 30px; top: 52px; font-size: 16px; color: #787b86; }
+  #status { left: 30px; top: 52px; font-size: 16px; color: var(--muted, #787b86); }
   #legend { left: 30px; top: 74px; font-size: 14px; }
   #badge { right: 18px; top: 14px; font-size: 18px; font-weight: 700; color: #fff; padding: 6px 12px; }
   #news { right: 18px; top: 58px; font-size: 14px; font-weight: 700; color: #f85149; }
@@ -18,7 +18,7 @@
   .box { position: absolute; }
   .boxlabel { position: absolute; font-size: 14px; font-weight: 700; }
   .level { position: absolute; font-size: 15px; line-height: 18px; white-space: nowrap; }
-  .foot { font-size: 12px; color: #787b86; top: 594px; }
+  .foot { font-size: 12px; color: var(--muted, #787b86); top: 594px; }
 </style>
 </head>
 <body>
@@ -39,6 +39,10 @@
 (function () {
   const S = window.SPEC;
   const $ = (id) => document.getElementById(id);
+  const root = document.documentElement.style;
+  root.setProperty('--bg', S.theme.bg);
+  root.setProperty('--text', S.theme.text);
+  root.setProperty('--muted', S.theme.muted);
   $('title').textContent = S.header.title;
   $('status').textContent = S.header.status;
   $('asof').textContent = S.header.as_of;
@@ -52,11 +56,11 @@
 
   const chart = LightweightCharts.createChart($('chart'), {
     width: 960, height: 484,
-    layout: { background: { type: 'solid', color: '#131722' }, textColor: '#787b86', fontSize: 14 },
-    grid: { vertLines: { color: '#232733' }, horzLines: { color: '#232733' } },
-    rightPriceScale: { borderColor: '#232733', minimumWidth: 92,
+    layout: { background: { type: 'solid', color: S.theme.bg }, textColor: S.theme.muted, fontSize: 14 },
+    grid: { vertLines: { color: S.theme.grid }, horzLines: { color: S.theme.grid } },
+    rightPriceScale: { borderColor: S.theme.axis, minimumWidth: 92,
                        scaleMargins: { top: 0.02, bottom: 0.02 } },
-    timeScale: { borderColor: '#232733', timeVisible: false, secondsVisible: false,
+    timeScale: { borderColor: S.theme.axis, timeVisible: false, secondsVisible: false,
                  tickMarkFormatter: (t) => {
                    const d = new Date(t * 1000);
                    return d.toLocaleString('en-US', { month: 'short', day: '2-digit', timeZone: 'UTC' });
