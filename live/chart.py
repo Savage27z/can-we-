@@ -187,8 +187,9 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
         labels.append((level, f"SSL {format(level, fmt)}", SELL_SIDE))
 
     # Setups
+    notes: list = []
     for setup in setups:
-        _draw_setup(ax, setup, times, line_end, fmt, labels, y_hi - y_lo)
+        _draw_setup(ax, setup, times, line_end, fmt, labels, y_hi - y_lo, notes)
 
     # Current price
     price_color = UP if closes[-1] >= opens[-1] else DOWN
@@ -207,9 +208,11 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
             clip_on=False, transform=ax.get_yaxis_transform(),
             bbox={"facecolor": price_color, "edgecolor": "none", "pad": 3})
 
-    for y, text, color in _spread_labels(labels, (y_hi - y_lo) * 0.055):
+    spread = _spread_labels(labels, (y_hi - y_lo) * 0.055)
+    for y, text, color in spread:
         ax.text(label_x, y, text, color=color, fontsize=FONT_LABEL, va="center", ha="left",
                 zorder=5, clip_on=False)
+    _place_notes(ax, notes, [y for y, _, _ in spread], y_hi - y_lo)
 
     # Header
     pair_label = state.pair.replace("_", "")
@@ -237,8 +240,55 @@ def render_chart(candles: pd.DataFrame, state: LiveState) -> bytes:
     return buf.getvalue()
 
 
+POSITION_ALPHA = 0.24         # the green/red zones of a live trade, like TradingView's position tool
+PLAN_ALPHA = 0.10             # a planned trade's zones: lighter, so it can't pass for a live one
+
+
+MIN_ZONE_FOR_TEXT = 0.10      # of the chart's price span: a thinner zone has no room for text
+
+
+def _zone(ax, x0: float, x1: float, entry: float, level: float, color: str, alpha: float,
+          text: str, y_span: float, notes: list, planned: bool = False) -> None:
+    """One side of a TradingView-style position: a filled box from the entry to the target
+    (green) or the stop (red), running out to the right edge, with its size written inside."""
+    ax.add_patch(Rectangle((x0, min(entry, level)), x1 - x0, abs(level - entry),
+                           facecolor=color, alpha=alpha, linewidth=0, zorder=1))
+    if planned:  # a dashed outline says "not active"
+        ax.add_patch(Rectangle((x0, min(entry, level)), x1 - x0, abs(level - entry), fill=False,
+                               edgecolor=color, alpha=0.55, linestyle="--", linewidth=1.0,
+                               zorder=1))
+    if text and abs(level - entry) >= y_span * MIN_ZONE_FOR_TEXT:
+        # Placed later, once the level labels' heights are known, at the spot in the zone
+        # furthest from all of them.
+        notes.append((min(entry, level), max(entry, level), text, color, x1 - 0.3))
+
+
+def _zone_text(plan, side: str, planned: bool) -> str:
+    """'+37.6 pips · 2.4R' inside the target zone, '−15.7 pips' inside the stop zone."""
+    if plan is None:
+        return ""
+    prefix = "Plan " if planned else ""
+    if side == "target":
+        if plan.target_pips is None:
+            return ""
+        reward = f" · {plan.rr:.1f}R" if plan.rr is not None else ""
+        return f"{prefix}+{plan.target_pips:.1f} pips{reward}"
+    return f"{prefix}−{plan.stop_pips:.1f} pips" if plan.stop_pips is not None else ""
+
+
+def _place_notes(ax, notes: list, label_ys: list[float], y_span: float) -> None:
+    """Writes each zone's size inside the zone, at the height that keeps it clear of the level
+    labels (the sweep level, for one, always sits inside a live trade's stop zone)."""
+    for low, high, text, color, x in notes:
+        candidates = [low + (high - low) * f for f in (0.15, 0.3, 0.5, 0.7, 0.85)]
+        y = max(candidates, key=lambda c: min([abs(c - ly) for ly in label_ys] or [y_span]))
+        ax.text(x, y, text, color=color, fontsize=FONT_TICK, fontweight="bold", va="center",
+                ha="right", zorder=5)
+
+
 def _draw_setup(ax, setup: ActiveSetup, times: pd.Series, line_end: float,
-                fmt: str, labels: list, y_span: float) -> None:
+                fmt: str, labels: list, y_span: float, notes: list) -> None:
+    zone_end = len(times) - 1 + RIGHT_PADDING_SLOTS - 0.3
     bullish = setup.direction == "bullish"
     sweep_pos = _position(times, setup.sweep_time)
     start = sweep_pos if sweep_pos is not None else 0
@@ -283,29 +333,33 @@ def _draw_setup(ax, setup: ActiveSetup, times: pd.Series, line_end: float,
             ax.hlines(plan.stop, x0, line_end, colors=DOWN, linestyles="--", linewidth=1.6,
                       alpha=0.85, zorder=3)
             labels.append((plan.stop, f"Plan stop {format(plan.stop, fmt)}", DOWN))
+            zone_from = len(times) - 1
+            entry = plan.entry if plan.entry is not None else setup.confirmation_level
+            _zone(ax, zone_from, zone_end, entry, plan.stop, DOWN, PLAN_ALPHA,
+                  _zone_text(plan, "stop", True), y_span, notes, planned=True)
             if plan.target is not None:
                 ax.hlines(plan.target, x0, line_end, colors=UP, linestyles="--",
                           linewidth=1.6, alpha=0.85, zorder=3)
                 reward = f" (+{plan.rr:.1f}R)" if plan.rr is not None else ""
                 labels.append((plan.target, f"Plan TP {format(plan.target, fmt)}{reward}", UP))
+                _zone(ax, zone_from, zone_end, entry, plan.target, UP, PLAN_ALPHA,
+                      _zone_text(plan, "target", True), y_span, notes, planned=True)
 
     # A confirmed trade: entry, stop, target and the risk/reward zones.
     if setup.status == "live_trade" and setup.entry_price is not None:
         confirm_pos = _position_containing(times, setup.confirm_time)
         x0 = confirm_pos if confirm_pos is not None else 0
         if setup.stop_price is not None:
-            ax.add_patch(Rectangle((x0, min(setup.entry_price, setup.stop_price)), line_end - x0,
-                                   abs(setup.entry_price - setup.stop_price), facecolor=DOWN,
-                                   alpha=0.14, linewidth=0, zorder=1))
-            ax.hlines(setup.stop_price, x0, line_end, colors=DOWN, linewidth=1.8, zorder=3)
+            _zone(ax, x0, zone_end, setup.entry_price, setup.stop_price, DOWN, POSITION_ALPHA,
+                  _zone_text(setup.plan, "stop", False), y_span, notes)
+            ax.hlines(setup.stop_price, x0, zone_end, colors=DOWN, linewidth=1.8, zorder=3)
             labels.append((setup.stop_price, f"Stop {format(setup.stop_price, fmt)}", DOWN))
         if setup.target_price is not None:
-            ax.add_patch(Rectangle((x0, min(setup.entry_price, setup.target_price)), line_end - x0,
-                                   abs(setup.target_price - setup.entry_price), facecolor=UP,
-                                   alpha=0.14, linewidth=0, zorder=1))
-            ax.hlines(setup.target_price, x0, line_end, colors=UP, linewidth=1.8, zorder=3)
+            _zone(ax, x0, zone_end, setup.entry_price, setup.target_price, UP, POSITION_ALPHA,
+                  _zone_text(setup.plan, "target", False), y_span, notes)
+            ax.hlines(setup.target_price, x0, zone_end, colors=UP, linewidth=1.8, zorder=3)
             reward = f" (+{setup.rr:.1f}R)" if setup.rr is not None else ""
             labels.append((setup.target_price,
                            f"TP {format(setup.target_price, fmt)}{reward}", UP))
-        ax.hlines(setup.entry_price, x0, line_end, colors=TEXT, linewidth=1.8, zorder=3)
+        ax.hlines(setup.entry_price, x0, zone_end, colors=TEXT, linewidth=1.8, zorder=3)
         labels.append((setup.entry_price, f"Entry {format(setup.entry_price, fmt)}", TEXT))

@@ -172,6 +172,42 @@ class LegibilityTests(unittest.TestCase):
         self.assertEqual(img.size[0], int(chart.FIG_SIZE[0] * chart.DPI))  # renders, no error
 
 
+class PositionZoneTests(unittest.TestCase):
+    """The green target zone and red stop zone, like TradingView's position tool."""
+
+    def test_zone_text_states_pips_and_reward_to_risk(self):
+        c = make_candles()
+        plan = make_setup(c, "live_trade").plan
+        self.assertRegex(chart._zone_text(plan, "target", False), r"^\+\d+\.\d pips · 2\.\dR$")
+        self.assertRegex(chart._zone_text(plan, "stop", False), r"^−\d+\.\d pips$")
+        self.assertTrue(chart._zone_text(plan, "stop", True).startswith("Plan "))
+        self.assertEqual(chart._zone_text(None, "target", False), "")
+
+    def test_a_planned_trade_is_lighter_than_a_live_one(self):
+        self.assertLess(chart.PLAN_ALPHA, chart.POSITION_ALPHA)
+
+    def test_zone_text_is_placed_clear_of_the_level_labels(self):
+        placed = []
+
+        class Ax:
+            def text(self, x, y, text, **kwargs):
+                placed.append(y)
+
+        # A zone from 1.00 to 2.00 with a label near its middle: the text must not sit there.
+        chart._place_notes(Ax(), [(1.0, 2.0, "x", "red", 5.0)], [1.5], 1.0)
+        self.assertEqual(len(placed), 1)
+        self.assertGreater(abs(placed[0] - 1.5), 0.2)
+
+    def test_a_zone_too_thin_for_text_writes_none(self):
+        notes = []
+        from matplotlib.figure import Figure
+        ax = Figure().add_axes([0, 0, 1, 1])
+        chart._zone(ax, 0, 5, 1.000, 1.005, "red", 0.2, "txt", 1.0, notes)
+        self.assertEqual(notes, [])
+        chart._zone(ax, 0, 5, 1.0, 1.5, "red", 0.2, "txt", 1.0, notes)
+        self.assertEqual(len(notes), 1)
+
+
 class HelperTests(unittest.TestCase):
     def test_position_requires_an_exact_candle_open(self):
         times = make_candles()["time"]

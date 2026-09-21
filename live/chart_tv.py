@@ -22,7 +22,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .chart import (BIAS_COLORS, BUY_SIDE, DOWN, MAX_LIQUIDITY_LINES, MAX_SETUPS_DRAWN,
+from .chart import (MIN_ZONE_FOR_TEXT, PLAN_ALPHA, POSITION_ALPHA, _zone_text, BIAS_COLORS, BUY_SIDE, DOWN, MAX_LIQUIDITY_LINES, MAX_SETUPS_DRAWN,
                     RIGHT_PADDING_SLOTS, SELL_SIDE, SWEEP, TEXT, UP, _decimals, _position,
                     _position_containing, _status_line)
 from .state import ActiveSetup, LiveState
@@ -118,7 +118,8 @@ def build_spec(candles: pd.DataFrame, state: LiveState) -> dict:
         "y_lo": float(y_lo), "y_hi": float(y_hi),
         "candles": [{"time": _unix(t), "open": float(o), "high": float(h), "low": float(l),
                      "close": float(c)} for t, o, h, l, c in zip(times, opens, highs, lows, closes)],
-        "lines": lines, "labels": labels, "boxes": boxes,
+        "lines": lines, "labels": labels, "boxes": boxes, "min_zone": MIN_ZONE_FOR_TEXT,
+        "span": float(y_hi - y_lo),
         "markers": sorted(markers, key=lambda m: m["time"]),
         "header": {
             "title": f"{state.pair.replace('_', '')}  ·  4h  ·  OANDA",
@@ -163,24 +164,34 @@ def _setup_spec(setup: ActiveSetup, times: pd.Series, n: int, fmt, lines: list, 
         plan = setup.plan
         if plan is not None:
             _level_spec(plan.stop, DOWN, "dashed", 1.5, f"Plan stop {fmt(plan.stop)}", lines, labels)
+            entry = plan.entry if plan.entry is not None else setup.confirmation_level
+            boxes.append({"i0": n - 1, "edge": True, "low": min(entry, plan.stop),
+                          "high": max(entry, plan.stop), "color": DOWN, "alpha": PLAN_ALPHA,
+                          "label": "", "note": _zone_text(plan, "stop", True), "dashed": True})
             if plan.target is not None:
                 reward = f" (+{plan.rr:.1f}R)" if plan.rr is not None else ""
                 _level_spec(plan.target, UP, "dashed", 1.5,
                             f"Plan TP {fmt(plan.target)}{reward}", lines, labels)
+                boxes.append({"i0": n - 1, "edge": True, "low": min(entry, plan.target),
+                              "high": max(entry, plan.target), "color": UP, "alpha": PLAN_ALPHA,
+                              "label": "", "note": _zone_text(plan, "target", True),
+                              "dashed": True})
 
     if setup.status == "live_trade" and setup.entry_price is not None:
         confirm_pos = _position_containing(times, setup.confirm_time)
         t0 = confirm_pos
         if setup.stop_price is not None:
-            boxes.append({"i0": t0, "low": min(setup.entry_price, setup.stop_price),
+            boxes.append({"i0": t0, "edge": True, "low": min(setup.entry_price, setup.stop_price),
                           "high": max(setup.entry_price, setup.stop_price),
-                          "color": DOWN, "alpha": 0.14, "label": ""})
+                          "color": DOWN, "alpha": POSITION_ALPHA, "label": "",
+                          "note": _zone_text(setup.plan, "stop", False)})
             _level_spec(setup.stop_price, DOWN, "solid", 2, f"Stop {fmt(setup.stop_price)}",
                         lines, labels)
         if setup.target_price is not None:
-            boxes.append({"i0": t0, "low": min(setup.entry_price, setup.target_price),
+            boxes.append({"i0": t0, "edge": True, "low": min(setup.entry_price, setup.target_price),
                           "high": max(setup.entry_price, setup.target_price),
-                          "color": UP, "alpha": 0.14, "label": ""})
+                          "color": UP, "alpha": POSITION_ALPHA, "label": "",
+                          "note": _zone_text(setup.plan, "target", False)})
             reward = f" (+{setup.rr:.1f}R)" if setup.rr is not None else ""
             _level_spec(setup.target_price, UP, "solid", 2,
                         f"TP {fmt(setup.target_price)}{reward}", lines, labels)

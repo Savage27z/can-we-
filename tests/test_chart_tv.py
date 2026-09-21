@@ -44,6 +44,26 @@ class BuildSpecTests(unittest.TestCase):
         # the FVG plus the stop and target zones
         self.assertEqual(len(spec["boxes"]), 3)
 
+    def test_a_live_trades_zones_run_to_the_edge_and_state_their_size(self):
+        candles = make_candles()
+        setup = make_setup(candles, "live_trade")
+        spec = chart_tv.build_spec(candles, make_state(candles, [setup]))
+        zones = [b for b in spec["boxes"] if b.get("edge")]
+        self.assertEqual(len(zones), 2)
+        notes = " | ".join(z["note"] for z in zones)
+        self.assertIn("pips", notes)
+        self.assertIn("2.4R", notes)
+        self.assertTrue(all(not z.get("dashed") for z in zones))
+
+    def test_a_waiting_trades_zones_are_dashed_and_marked_as_a_plan(self):
+        candles = make_candles()
+        setup = make_setup(candles, "pending_confirmation")
+        spec = chart_tv.build_spec(candles, make_state(candles, [setup]))
+        zones = [b for b in spec["boxes"] if b.get("edge")]
+        self.assertEqual(len(zones), 2)
+        self.assertTrue(all(z["dashed"] and z["note"].startswith("Plan ") for z in zones))
+        self.assertTrue(all(z["alpha"] < 0.15 for z in zones))   # lighter than a live trade's
+
     def test_a_waiting_setup_draws_its_planned_stop_and_target_not_a_live_trade(self):
         candles = make_candles()
         setup = make_setup(candles, "pending_confirmation")
