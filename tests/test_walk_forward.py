@@ -11,6 +11,7 @@ UTC = "UTC"
 def trades_frame(rows):
     df = pd.DataFrame(rows, columns=["instrument", "entry_time", "r_net"])
     df["entry_time"] = pd.to_datetime(df["entry_time"], utc=True)
+    df["exit_time"] = df["entry_time"] + pd.Timedelta(days=2)
     df["outcome"] = np.where(df["r_net"] > 0, "win", "loss")
     return df
 
@@ -90,10 +91,30 @@ class SelectionTests(unittest.TestCase):
         result = walk_forward_selection(trades_frame(rows), top_n=3, replicates=100)
         self.assertNotIn("NEW", result.folds[0].selected)
 
+    def test_a_trade_still_open_when_a_block_begins_is_not_used_to_rank_pairs(self):
+        # LATE enters in December 2010 with a huge win that only closes in February 2011. When the
+        # 2011 block begins that outcome is not known yet, so it must not lift LATE's ranking.
+        df = synthetic({name: 0.0 for name in NAMES[:-1]}, seed=3)
+        late = [("LATE", pd.Timestamp("2009-06-01", tz=UTC) + pd.Timedelta(days=30 * k), -0.5)
+                for k in range(25)]
+        late += [("LATE", pd.Timestamp("2010-12-20", tz=UTC), 500.0)]
+        late_df = trades_frame(late)
+        late_df.loc[late_df["r_net"] == 500.0, "exit_time"] = pd.Timestamp("2011-02-10", tz=UTC)
+        combined = pd.concat([df, late_df], ignore_index=True)
+        result = walk_forward_selection(combined, top_n=3, first_test_year=2011, replicates=100)
+        self.assertNotIn("LATE", result.folds[0].selected)
+
+    def test_exit_times_are_required(self):
+        df = synthetic({name: 0.0 for name in NAMES}).drop(columns=["exit_time"])
+        with self.assertRaises(ValueError) as ctx:
+            walk_forward_selection(df, top_n=3, replicates=10)
+        self.assertIn("exit_time", str(ctx.exception))
+
     def test_open_trades_are_ignored(self):
         df = synthetic({name: 0.0 for name in NAMES})
         opened = df.copy()
         opened["r_net"] = np.nan
+        opened["exit_time"] = pd.NaT
         opened["outcome"] = "open"
         combined = pd.concat([df, opened], ignore_index=True)
         a = walk_forward_selection(df, top_n=3, replicates=300, seed=1)

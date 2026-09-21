@@ -5,7 +5,7 @@ Someone who looked at a table of 65 pairs and chose the best few is doing exactl
 question is whether that choice would have worked going forward.
 
 The test replays it honestly. For each block of test years (two years at a time, from 2011), the
-pairs are ranked by their net R per trade using ONLY trades that closed before the block began; the
+pairs are ranked by their net R per trade using ONLY trades that had closed before the block began; the
 top few are "selected"; and their trades inside the block, which the ranking never saw, are
 scored. Blocks are chained forward, each training on everything before it.
 
@@ -63,13 +63,21 @@ def walk_forward_selection(trades: pd.DataFrame, top_n: int = DEFAULT_TOP_N,
                            test_years: int = DEFAULT_TEST_YEARS,
                            min_train_trades: int = DEFAULT_MIN_TRAIN_TRADES,
                            replicates: int = 5000, seed: int = 0) -> WalkForwardResult:
-    """`trades` needs the columns instrument, entry_time (tz-aware) and r_net; open trades
-    (outcome "open", or no r_net) are ignored."""
-    resolved = trades[np.isfinite(trades["r_net"].astype(float))]
+    """`trades` needs the columns instrument, entry_time, exit_time (both tz-aware) and r_net; open
+    trades (no exit or no r_net) are ignored.
+
+    Training uses trades that had CLOSED before the block began (by exit_time), not merely ones
+    entered before it: a trade entered in December that closes in February is not known in
+    January. Scoring uses the trades entered inside the block."""
+    if "exit_time" not in trades.columns:
+        raise ValueError("walk-forward needs each trade's exit_time, so that training uses only "
+                         "trades that had already closed when a test block began")
+    resolved = trades[np.isfinite(trades["r_net"].astype(float)) & trades["exit_time"].notna()]
     result = WalkForwardResult()
     if resolved.empty:
         return result
     times = resolved["entry_time"]
+    closed = resolved["exit_time"]
     last_year = int(times.max().year)
 
     per_fold_arrays = []      # (test_sum, test_n) per eligible instrument, for the random draws
@@ -79,7 +87,7 @@ def walk_forward_selection(trades: pd.DataFrame, top_n: int = DEFAULT_TOP_N,
         end = start + pd.DateOffset(years=test_years)
         start_year += test_years
 
-        train = resolved[times < start]
+        train = resolved[closed < start]
         test = resolved[(times >= start) & (times < end)]
         train_stats = train.groupby("instrument")["r_net"].agg(["mean", "count"])
         ranked = train_stats[train_stats["count"] >= min_train_trades]
