@@ -102,8 +102,10 @@
       if (yA === null || yB === null) return;
       const el = document.createElement('div');
       el.className = 'box';
-      el.style.cssText = `left:${x0}px;top:${Math.min(yA, yB)}px;width:${Math.max(0, xEnd - x0)}px;` +
-        `height:${Math.max(2, Math.abs(yB - yA))}px;background:${b.color};opacity:${b.alpha};`;
+      const x1 = b.edge ? plotWidth - 4 : xEnd;   // position zones run out to the right edge
+      el.style.cssText = `left:${x0}px;top:${Math.min(yA, yB)}px;width:${Math.max(0, x1 - x0)}px;` +
+        `height:${Math.max(2, Math.abs(yB - yA))}px;background:${b.color};opacity:${b.alpha};` +
+        (b.dashed ? `outline:1px dashed ${b.color};` : '');
       overlay.appendChild(el);
       if (b.label) {
         const t = document.createElement('div');
@@ -128,6 +130,22 @@
       el.className = 'level';
       el.style.cssText = `left:${xEnd + 8}px;top:${l.y - 9}px;color:${l.color};`;
       el.textContent = l.text;
+      overlay.appendChild(el);
+    });
+
+    // Each zone's size, written inside it at the height furthest from the level labels
+    // (the sweep level always sits inside a live trade's stop zone).
+    const labelYs = placed.map((l) => l.y);
+    S.boxes.filter((b) => b.note && (b.high - b.low) >= S.span * S.min_zone).forEach((b) => {
+      const yTop = series.priceToCoordinate(b.high), yBot = series.priceToCoordinate(b.low);
+      if (yTop === null || yBot === null) return;
+      const candidates = [0.15, 0.3, 0.5, 0.7, 0.85].map((f) => yTop + (yBot - yTop) * f);
+      const dist = (c) => Math.min(...labelYs.map((ly) => Math.abs(c - ly)), 1e9);
+      const y = candidates.reduce((best, c) => (dist(c) > dist(best) ? c : best), candidates[0]);
+      const el = document.createElement('div');
+      el.className = 'boxlabel';
+      el.style.cssText = `right:${960 - plotWidth + 12}px;top:${y - 9}px;color:${b.color};font-size:15px;`;
+      el.textContent = b.note;
       overlay.appendChild(el);
     });
     window.__ready = true;
