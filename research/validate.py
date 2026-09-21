@@ -47,7 +47,8 @@ def _validate_one(job: tuple) -> dict:
      direction, seed) = job
     try:
         strategy = get_strategy(strategy_name)
-        window = engine.window_for(strategy.timeframes, instrument, start)
+        window = engine.window_for(strategy.timeframes, instrument, start,
+                                   engine.warmup_of(strategy))
         frames = engine.load_frames(instrument, strategy.timeframes, window)
         h1 = frames[engine.EXECUTION_FRAME]
         if h1.empty:
@@ -56,9 +57,10 @@ def _validate_one(job: tuple) -> dict:
         cost = get_cost(cost_name, slippage_pips=slippage)
         trades, _ = engine.simulate(output.signals, h1, get_exit(exit_name), cost, instrument,
                                     strategy.name)
+        entry_mask = strategy.entry_mask(h1) if hasattr(strategy, "entry_mask") else None
         null = null_model.null_replicates(output.signals, h1, exit_name, cost,
                                           rules.pip_size(instrument), replicates, window_days,
-                                          direction, seed, key=instrument)
+                                          direction, seed, key=instrument, eligible_mask=entry_mask)
     except Exception as err:          # one bad instrument must not end a 68-pair run
         return {"instrument": instrument, "error": f"{type(err).__name__}: {err}"}
     return {"instrument": instrument, "trades": trades, "null_sums": null.sums,

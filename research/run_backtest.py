@@ -38,7 +38,8 @@ from .strategies import STRATEGIES, get_strategy
 
 
 def _window_for(strategy: str, instrument: str, start: str):
-    return engine.window_for(get_strategy(strategy).timeframes, instrument, start)
+    strat = get_strategy(strategy)
+    return engine.window_for(strat.timeframes, instrument, start, engine.warmup_of(strat))
 
 
 def _run_one(job: tuple) -> dict:

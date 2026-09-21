@@ -62,6 +62,13 @@ class Strategy(Protocol):
     `timeframes` names the candle frames it needs (keys of `frames`). The engine always
     provides "H1" as the execution frame, and every signal's `entry_index` is a row of
     it. Frames arrive with a fresh 0..n-1 index.
+
+    Two optional attributes:
+    - `daily_warmup_days`: how much Daily history before the first signal its indicators need
+      (a 200-day average needs 200), so the engine keeps that much before the window starts.
+    - `entry_mask(h1) -> bool array`: which H1 candles it could have entered on. The null model
+      draws its random entries from these, so a strategy that only ever enters at 07:00 is compared
+      with random 07:00 entries, not with entries at hours it never uses.
     """
     name: str
     timeframes: tuple[str, ...]

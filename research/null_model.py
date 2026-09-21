@@ -99,9 +99,14 @@ class NullResult:
 
 def null_replicates(signals: Sequence[Signal], h1: pd.DataFrame, policy: str, cost_model,
                     pip_size: float, replicates: int, window_days: float = DEFAULT_WINDOW_DAYS,
-                    direction: str = "same", seed: int = 0, key: str = "") -> NullResult:
+                    direction: str = "same", seed: int = 0, key: str = "",
+                    eligible_mask: Optional[np.ndarray] = None) -> NullResult:
     """The null distribution for one instrument. `key` (e.g. the instrument name) keeps two
-    instruments' random draws independent while each stays reproducible from `seed`."""
+    instruments' random draws independent while each stays reproducible from `seed`.
+
+    `eligible_mask` says which H1 candles the strategy could have entered on. Random entries must
+    come from the same candles, or the comparison mixes entry timing with time-of-day effects such
+    as the spread; the default is the in-session rule that sweep/FVG's confirmation candles obey."""
     if direction not in DIRECTIONS:
         raise ValueError(f"direction must be one of {DIRECTIONS}, got {direction!r}")
     n_signals = len(signals)
@@ -112,7 +117,11 @@ def null_replicates(signals: Sequence[Signal], h1: pd.DataFrame, policy: str, co
     arrays = Arrays.from_frame(h1)
     geo = geometry_of(signals)
     rng = np.random.default_rng([seed, zlib.crc32(key.encode())])
-    eligible = np.flatnonzero(sessions.in_session_mask(h1["time"]).to_numpy())
+    if eligible_mask is None:
+        eligible_mask = sessions.in_session_mask(h1["time"]).to_numpy()
+    eligible = np.flatnonzero(np.asarray(eligible_mask, dtype=bool))
+    if len(eligible) == 0:
+        raise ValueError("no candle is eligible for a random entry")
     entries = draw_entries(geo.entry_index, _times_ns(h1), eligible, window_days, replicates, rng)
     if direction == "same":
         sign = np.broadcast_to(geo.sign[:, None], entries.shape)

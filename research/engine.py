@@ -54,32 +54,40 @@ class Window:
     daily_start: pd.Timestamp
 
 
-def window_from_start(start: pd.Timestamp) -> Window:
-    return Window(start=start, daily_start=start - DAILY_WARMUP)
+def window_from_start(start: pd.Timestamp, daily_warmup: pd.Timedelta = DAILY_WARMUP) -> Window:
+    return Window(start=start, daily_start=start - daily_warmup)
 
 
-def usable_window(instrument: str, timeframes: tuple[str, ...]) -> Optional[Window]:
-    """The instrument's dense history across `timeframes`, or None if it has none."""
+def usable_window(instrument: str, timeframes: tuple[str, ...],
+                  daily_warmup: pd.Timedelta = DAILY_WARMUP) -> Optional[Window]:
+    """The instrument's dense history across `timeframes`, or None if it has none. The Daily frame
+    may begin `daily_warmup` earlier, for indicators that need history before the first signal."""
     starts = quality.usable_windows(instrument, tuple(dict.fromkeys((*timeframes, EXECUTION_FRAME))))
     if starts is None:
         return None
     start = max(starts.values())
-    daily = max(starts["D"], start - DAILY_WARMUP) if "D" in starts else start
+    daily = max(starts["D"], start - daily_warmup) if "D" in starts else start
     return Window(start=start, daily_start=daily)
 
 
-def window_for(timeframes: tuple[str, ...], instrument: str, start: str) -> Optional[Window]:
+def window_for(timeframes: tuple[str, ...], instrument: str, start: str,
+               daily_warmup: pd.Timedelta = DAILY_WARMUP) -> Optional[Window]:
     """The window a run should use: "all" (no cut), "auto" (the instrument's dense history) or an
     explicit date. An instrument with no dense history is an error, not a silent empty run."""
     if start == "all":
         return None
     if start == "auto":
-        window = usable_window(instrument, timeframes)
+        window = usable_window(instrument, timeframes, daily_warmup)
         if window is None:
             raise ValueError("no dense history in every timeframe (see python -m "
                              "data_pipeline.quality); use --start all to run on it anyway")
         return window
-    return window_from_start(pd.Timestamp(start, tz="UTC"))
+    return window_from_start(pd.Timestamp(start, tz="UTC"), daily_warmup)
+
+
+def warmup_of(strategy) -> pd.Timedelta:
+    """How much Daily history before the first signal a strategy needs (its indicators)."""
+    return pd.Timedelta(days=getattr(strategy, "daily_warmup_days", DAILY_WARMUP.days))
 
 
 def load_frames(instrument: str, timeframes: tuple[str, ...],
@@ -150,7 +158,8 @@ def simulate(signals: list[Signal], h1: pd.DataFrame, exit_policy: ExitPolicy, c
 def run_instrument(strategy: Strategy, instrument: str, exit_policy: ExitPolicy, cost_model,
                    frames: dict[str, pd.DataFrame] | None = None,
                    window: Optional[Window] = None) -> InstrumentRun:
-    frames = frames if frames is not None else load_frames(instrument, strategy.timeframes, window)
+    if frames is None:
+        frames = load_frames(instrument, strategy.timeframes, window)
     h1 = frames[EXECUTION_FRAME]
     if h1.empty:
         raise ValueError(f"{instrument}: no H1 candles in the requested window")
