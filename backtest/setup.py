@@ -13,6 +13,7 @@ import pandas as pd
 from . import bias, invalidation, rules, xtf
 from .fractals import LiquidityLevel
 from .fvg import FVG, detect_fvg
+from .resolution import resolve_on_closes
 
 
 @dataclass
@@ -194,19 +195,13 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int) -> Setu
     outcome = "open"
     resolve_index = None
     resolve_time = None
-    for j in range(confirmed_index + 1, len(h1_close)):
-        c = h1_close[j]
-        if invalidation.is_invalidated(direction, sweep_extreme, c):
-            outcome = "loss"
-            resolve_index = j
-            resolve_time = h1_time.iloc[j] + pd.Timedelta(hours=1)  # close time, not open (see confirm_time above)
-            break
-        won = (c >= target_price) if direction == "bullish" else (c <= target_price)
-        if won:
-            outcome = "win"
-            resolve_index = j
-            resolve_time = h1_time.iloc[j] + pd.Timedelta(hours=1)  # close time, not open (see confirm_time above)
-            break
+    resolution = resolve_on_closes(direction, h1_close, confirmed_index + 1,
+                                   sweep_extreme, target_price)
+    if resolution is not None:
+        resolve_index, reason = resolution
+        outcome = "loss" if reason == "invalidation" else "win"
+        # close time, not open (see confirm_time above)
+        resolve_time = h1_time.iloc[resolve_index] + pd.Timedelta(hours=1)
 
     realized_r = rr if outcome == "win" else (-1.0 if outcome == "loss" else None)
 

@@ -17,10 +17,13 @@ from .setup import MarketData, SetupResult, evaluate_setup
 
 
 def load_market_data(pair: str) -> MarketData:
-    daily = storage.load(pair, "D")
-    h4 = storage.load(pair, "H4")
-    h1 = storage.load(pair, "H1")
+    return build_market_data(pair, storage.load(pair, "D"), storage.load(pair, "H4"),
+                             storage.load(pair, "H1"))
 
+
+def build_market_data(pair: str, daily, h4, h1) -> MarketData:
+    """MarketData from candle frames already in memory (the research engine loads the
+    frames once and hands them to strategies)."""
     h4 = find_swings(h4).reset_index(drop=True)
     h1 = h1.reset_index(drop=True)
     daily = daily.reset_index(drop=True)
