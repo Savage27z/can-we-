@@ -17,6 +17,7 @@ from live.state import LiveState, compute_current_state
 from narration.generate import narrate_state
 
 from . import config
+from .wording import NOTICE
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +119,8 @@ class ReportService:
             log.exception("could not render the trade plan for %s; sending the read alone",
                           state.pair)
             plan = ""
-        return (plan + SEPARATOR + body if plan else body), narrated
+        text = plan + SEPARATOR + body if plan else body
+        return text + SEPARATOR + NOTICE, narrated
 
     def render(self, state: LiveState) -> str:
         return self._render(state)[0]

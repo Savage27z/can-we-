@@ -29,6 +29,7 @@ from news.filter import check_news
 from . import config
 from .messages import split_message
 from .service import ReportService
+from .wording import ALERT_HEADER
 
 log = logging.getLogger(__name__)
 
@@ -195,7 +196,7 @@ async def _run_cycle(context, chat_ids: set[int]) -> Optional[str]:
                 continue
             if report is None:
                 rendered = await asyncio.to_thread(service.render, state)
-                report = "🚨 New live setup\n\n" + rendered
+                report = ALERT_HEADER + "\n\n" + rendered
                 chart = await asyncio.to_thread(service.chart_for, state)
             if await _send(context.bot, chat_id, report, chart):
                 alert_log.add([delivery_key(state.pair, s, chat_id) for s in new])

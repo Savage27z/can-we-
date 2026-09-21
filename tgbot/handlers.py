@@ -5,6 +5,7 @@ from . import config
 from .messages import split_message
 from .pairs import normalize_pair
 from .service import ReportService
+from .wording import ALERTS_LINE, not_enabled
 
 log = logging.getLogger(__name__)
 
@@ -35,8 +36,7 @@ def start_text() -> str:
         "Daily → H4 → H1\n"
         "Liquidity sweeps + FVG + confirmation + news check\n\n"
         "<b>Alerts:</b>\n"
-        "Pushed automatically when a new setup confirms "
-        "(paused around high-impact news)\n\n"
+        f"{ALERTS_LINE}\n\n"
         "<i>Structural analysis, not financial advice.</i>"
     )
 
@@ -111,10 +111,7 @@ async def analysis(update, context) -> None:
         )
         return
     if pair not in config.LIVE_PAIRS:
-        await message.reply_text(
-            f"{pair} isn't enabled. Only {', '.join(config.LIVE_PAIRS)} passed the "
-            f"backtest gate; the other tested pairs showed negative expectancy."
-        )
+        await message.reply_text(not_enabled(pair, list(config.LIVE_PAIRS)))
         return
 
     service: ReportService = context.application.bot_data["service"]

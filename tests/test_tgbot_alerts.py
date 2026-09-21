@@ -153,6 +153,17 @@ class AlertJobTests(unittest.TestCase):
                 asyncio.run(alerts.alert_job(ctx))
         return ctx
 
+    def test_the_push_opens_by_saying_it_is_analysis_not_a_trade_signal(self):
+        from tgbot.wording import ALERT_HEADER
+
+        send = AsyncMock()
+        self.run_job(make_bot(send), chat_ids="111")
+        text = send.await_args.kwargs["text"]
+        self.assertTrue(text.startswith(ALERT_HEADER), text[:120])
+        self.assertIn("not a trade signal", text.splitlines()[0])
+        self.assertIn("REPORT", text)
+        self.assertNotIn("🚨", text)
+
     def test_sends_to_every_allowed_chat_and_records_each_delivery(self):
         send = AsyncMock()
         self.run_job(make_bot(send))

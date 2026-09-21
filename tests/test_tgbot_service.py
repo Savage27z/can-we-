@@ -8,11 +8,14 @@ from tgbot import config
 from tgbot.run_bot import RedactingFormatter, seconds_until_next_check
 from live.plan import SEPARATOR
 from tgbot.service import ReportService, fallback_text
+from tgbot.wording import NOTICE
 
 
 def body_of(text):
-    """The structural read that follows the trade plan."""
-    return text.split(SEPARATOR, 1)[-1]
+    """The structural read: what follows the trade plan and precedes the closing notice."""
+    closing = SEPARATOR + NOTICE
+    assert text.endswith(closing), "every report must end with the notice"
+    return text.split(SEPARATOR, 1)[-1][:-len(closing)]
 
 
 class Clock:
@@ -172,7 +175,7 @@ class TradePlanInReportTests(unittest.TestCase):
         self.assertTrue(text.startswith("🎯 TRADE PLAN"))
         self.assertIn("Stop-loss: 1.14500", text)
         self.assertIn("Take-profit: 1.15000", text)
-        self.assertTrue(text.endswith("NARRATED READ"))
+        self.assertEqual(body_of(text), "NARRATED READ")
         self.assertLess(text.index("TRADE PLAN"), text.index("NARRATED READ"))
 
     def test_the_plan_survives_a_narration_failure(self):
@@ -189,7 +192,8 @@ class TradePlanInReportTests(unittest.TestCase):
 
         service, _ = make_service(lambda s: "NARRATED READ")
         with patch("tgbot.service.plan_text", side_effect=RuntimeError("bug")):
-            self.assertEqual(service.get_report("EUR_USD"), "NARRATED READ")
+            text = service.get_report("EUR_USD")
+        self.assertEqual(text, "NARRATED READ" + SEPARATOR + NOTICE)   # no plan, but read and notice
 
     def test_alerts_render_the_same_report_including_the_plan(self):
         service, _ = make_service(lambda s: "NARRATED READ")
@@ -200,7 +204,53 @@ class TradePlanInReportTests(unittest.TestCase):
                                 Clock(), lambda s: None)
         text = service.get_report("EUR_USD")
         self.assertIn("nothing to enter", text)
-        self.assertTrue(text.endswith("READ"))
+        self.assertEqual(body_of(text), "READ")
+
+
+class NoticeTests(unittest.TestCase):
+    """Every report says what it is: an analysis of fixed rules, not a recommendation."""
+
+    def report(self, narrate, **kwargs):
+        service, _ = make_service(narrate)
+        return service.get_report("EUR_USD")
+
+    def test_a_narrated_report_ends_with_the_notice_exactly_once(self):
+        text = self.report(lambda s: "NARRATED")
+        self.assertTrue(text.endswith(NOTICE))
+        self.assertEqual(text.count(NOTICE), 1)
+
+    def test_the_fallback_report_carries_it_too(self):
+        def failing(state):
+            raise DeepSeekAPIError("down")
+
+        text = self.report(failing)
+        self.assertIn("plain summary", text)
+        self.assertTrue(text.endswith(NOTICE))
+
+    def test_it_is_added_by_the_service_not_left_to_the_narration_model(self):
+        # Whatever the model returns, and even if it returns nothing usable, the notice is there.
+        for narrated in ("NARRATED", "", None):
+            self.assertTrue(self.report(lambda s, n=narrated: n).endswith(NOTICE), repr(narrated))
+
+    def test_the_alert_path_renders_the_same_report_with_the_notice(self):
+        service, _ = make_service(lambda s: "NARRATED")
+        self.assertTrue(service.render(make_state([setup("live_trade")])).endswith(NOTICE))
+
+    def test_what_it_says_stays_within_what_the_research_supports(self):
+        # It must not read as an endorsement, and it must not overclaim a result either way.
+        for required in ("not a recommendation", "did not beat random entries",
+                         "too short to tell skill from luck", "Not financial advice"):
+            self.assertIn(required, NOTICE)
+        for forbidden in ("profitable", "proven", "guaranteed", "win rate", "edge"):
+            self.assertNotIn(forbidden, NOTICE.lower())
+
+    def test_a_long_report_with_the_notice_still_fits_telegrams_chunks(self):
+        from tgbot.messages import split_message
+
+        text = self.report(lambda s: "\n".join(f"line {i}" for i in range(900)))
+        chunks = split_message(text)
+        self.assertTrue(all(len(c) <= 4000 for c in chunks))
+        self.assertIn(NOTICE, chunks[-1])
 
 
 class RefreshSerialisationTests(unittest.TestCase):

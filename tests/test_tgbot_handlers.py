@@ -74,6 +74,7 @@ class StartTests(unittest.TestCase):
         self.assertIn("• $EURUSD — Forex", text)
         self.assertNotIn("GBPUSD", text)
         self.assertIn("not financial advice", text)
+        self.assertIn("Analysis, not signals", text)
 
     def test_authorized_start_replies_with_the_html_welcome(self):
         update = make_update()
@@ -156,13 +157,23 @@ class AnalysisTests(unittest.TestCase):
         run(handlers.analysis(update, make_context(args=["z" * 5000])))
         self.assertLess(len(replies(update)[0]), 200)
 
-    def test_pair_that_failed_the_backtest_gate_is_refused(self):
+    def test_a_pair_that_is_not_enabled_is_refused(self):
         update = make_update()
         called = []
         ctx = make_context(args=["GBPUSD"], get_report=lambda p: called.append(p) or "x")
         run(handlers.analysis(update, ctx))
         self.assertIn("isn't enabled", replies(update)[0])
         self.assertEqual(called, [])
+
+    def test_the_refusal_does_not_claim_a_backtest_endorsed_the_enabled_pair(self):
+        # It used to say the enabled pair "passed the backtest gate". The validation research no
+        # longer supports that (EUR_USD is positive but too few trades to tell from luck).
+        update = make_update()
+        run(handlers.analysis(update, make_context(args=["GBPUSD"])))
+        reply = replies(update)[0]
+        self.assertEqual(reply, "GBP_USD isn't enabled. This bot covers EUR_USD only.")
+        for claim in ("passed", "gate", "negative expectancy"):
+            self.assertNotIn(claim, reply)
 
     def test_service_failure_gets_a_generic_message_without_details(self):
         def boom(pair):
@@ -234,6 +245,12 @@ class ProfileTextTests(unittest.TestCase):
         from tgbot import set_profile
         self.assertLessEqual(len(set_profile.DESCRIPTION), 512)
         self.assertLessEqual(len(set_profile.SHORT_DESCRIPTION), 120)
+
+    def test_the_profile_says_analysis_and_does_not_oversell(self):
+        from tgbot import set_profile
+        self.assertIn("not signals", set_profile.DESCRIPTION)
+        self.assertIn("did not beat random entries", set_profile.DESCRIPTION)
+        self.assertIn("Not financial advice", set_profile.DESCRIPTION)
 
 
 if __name__ == "__main__":

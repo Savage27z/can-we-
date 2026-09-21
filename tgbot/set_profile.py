@@ -9,14 +9,9 @@ import asyncio
 from telegram import Bot
 
 from . import config
+from .wording import PROFILE_DESCRIPTION as DESCRIPTION
 
 # Telegram's limits: 512 characters for the description, 120 for the short one.
-DESCRIPTION = (
-    "Forex structural-analysis bot.\n\n"
-    "Reads liquidity sweeps, fair value gaps and confirmation across the Daily, "
-    "H4 and H1 timeframes, with a high-impact news check.\n\n"
-    "Structural analysis, not financial advice. You make your own decisions."
-)
 SHORT_DESCRIPTION = (
     "Forex structural analysis: sweeps, FVGs and confirmation on Daily/H4/H1. "
     "Not financial advice."
