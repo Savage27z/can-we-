@@ -7,8 +7,8 @@ before then are visible in the git history; changes after are amendments, listed
 ## The question
 
 Stage 4 found that four price-pattern strategies on intraday and daily horizons lose after costs,
-mostly because spread is large next to a tight stop (median cost 0.02R for the wide-stop
-strategies, 0.11R for sweep/FVG). At weekly-to-monthly holding periods the spread is small next to
+mostly because spread is large next to the stop (median cost 0.02R for the daily ATR-scaled
+strategies, 0.08R for the range breakout, 0.11R for sweep/FVG). At weekly-to-monthly holding periods the spread is small next to
 the move. If price data contains an exploitable edge in forex at all, a slow cross-sectional
 ranking of currencies is the place it can show up without being eaten by costs. This tests two
 standard versions, each once, with no variations.
@@ -131,7 +131,7 @@ in an Outcome section, as in stage 4.
   gap pays about 0.19% of notional, roughly 0.15R at a 2 x ATR unit of about 1.3% of price. A
   candidate could be erased by it, which is why a candidate needs the swap-inclusive re-test.
 - Overlapping cohorts and cross-currency correlation make the effective sample much smaller than the
-  leg count; the block bootstrap and the permutation null are designed for that, the pooled numbers
+  leg count; the block bootstrap and the permutation null are designed for that, the pooled intervals
   in earlier stages were not.
 - Sixteen currencies, several of them managed, and TRY left out. Twenty-one years cover few
   independent regimes.
