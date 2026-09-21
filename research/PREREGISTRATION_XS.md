@@ -1,8 +1,8 @@
 # Cross-sectional strategies: pre-registration (stage 4b)
 
-**Status: DRAFT, awaiting approval.** It becomes binding when the status line is changed to FROZEN in
-a commit, and no strategy code will be written and no result looked at before that. Changes made
-before then are visible in the git history; changes after are amendments, listed at the end.
+**Status: FROZEN on 2026-09-21, approved as drafted.** No strategy code had been written and no
+result looked at when this line was changed. From here on any change is an amendment, listed in an
+Outcome section at the end, and any departure in the results is reported as a deviation.
 
 ## The question
 
