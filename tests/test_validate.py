@@ -11,6 +11,7 @@ import pandas as pd
 
 from data_pipeline import config, storage
 from research import registry, validate, walk_forward
+from research.null_model import NullResult
 from tests.test_research import section81_frames
 
 
@@ -101,6 +102,7 @@ class FormattingTests(unittest.TestCase):
                 for _ in range(8):
                     rows.append((name, pd.Timestamp(f"{year}-06-01", tz="UTC"), rng.normal(0, 1)))
         df = pd.DataFrame(rows, columns=["instrument", "entry_time", "r_net"])
+        df["exit_time"] = df["entry_time"] + pd.Timedelta(days=2)
         wf = walk_forward.walk_forward_selection(df, top_n=3, replicates=200)
         text = validate.format_walk_forward(wf, 3)
         self.assertIn("selected pairs, out of sample", text)
@@ -164,6 +166,61 @@ class CommandLineTests(unittest.TestCase):
         code, output = self.run_cli("--no-register", pairs=("GBP_USD",))
         self.assertEqual(code, 1)
         self.assertIn("FAILED GBP_USD", output)
+
+
+class DecompositionTests(unittest.TestCase):
+    def test_gross_is_net_plus_cost_for_real_and_random(self):
+        resolved = pd.DataFrame({"r_net": [1.0, -1.5, 0.5], "cost_r": [0.1, 0.3, 0.2]})
+        null = NullResult(sums=np.array([-3.0, -3.0]), counts=np.array([10, 10]),
+                          cost_sums=np.array([2.0, 2.0]))
+        d = validate.decompose(resolved, null)
+        self.assertAlmostEqual(d["real"]["net"], 0.0)
+        self.assertAlmostEqual(d["real"]["cost"], 0.2)
+        self.assertAlmostEqual(d["real"]["gross"], 0.2)
+        self.assertAlmostEqual(d["random"]["net"], -0.3)
+        self.assertAlmostEqual(d["random"]["cost"], 0.2)
+        self.assertAlmostEqual(d["random"]["gross"], -0.1)
+
+    def test_the_text_shows_timing_and_cost_separately(self):
+        d = {"real": {"gross": -0.037, "cost": 0.388, "net": -0.426},
+             "random": {"gross": -0.019, "cost": 0.317, "net": -0.336}}
+        text = validate.format_decomposition(d)
+        self.assertIn("real minus random", text)
+        last = text.splitlines()[-1]
+        self.assertIn("-0.018", last)       # timing, before costs
+        self.assertIn("-0.071", last)       # extra spread paid
+        self.assertIn("-0.090", last)       # net
+
+
+class EntryHoursTests(unittest.TestCase):
+    def test_hours_are_the_candle_open_not_its_close_and_share_is_reported(self):
+        # entry_time is the entry candle's close, so an entry closing at 08:00 opened at 07:00.
+        times = ["2024-01-08 08:00"] * 6 + ["2024-01-08 22:00"] * 3 + ["2024-01-08 14:00"]
+        resolved = pd.DataFrame({"entry_time": pd.to_datetime(times, utc=True)})
+        text = validate.entry_hours(resolved)
+        self.assertTrue(text.startswith("07:00 60%"), text)
+        self.assertIn("21:00 30%", text)
+        self.assertIn("13:00 10%", text)
+
+
+class ReportIncludesTheDecompositionTests(unittest.TestCase):
+    def test_the_command_line_report_shows_it(self):
+        tmp = Path(tempfile.mkdtemp())
+        original = config.DATA_DIR
+        config.DATA_DIR = tmp
+        try:
+            for tf, df in section81_frames().items():
+                storage.save_merged("EUR_USD", tf, df.to_dict("records"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = validate.main(["--pairs", "EUR_USD", "--start", "all", "--exit", "close",
+                                      "--costs", "none", "--null-replicates", "60", "--no-register"])
+        finally:
+            config.DATA_DIR = original
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(code, 0)
+        self.assertIn("per trade, in R", out.getvalue())
+        self.assertIn("most common entry-candle opens", out.getvalue())
 
 
 if __name__ == "__main__":

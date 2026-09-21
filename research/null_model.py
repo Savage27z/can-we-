@@ -84,10 +84,17 @@ def draw_entries(entry_index: np.ndarray, times_ns: np.ndarray, eligible: np.nda
 class NullResult:
     sums: np.ndarray             # per replicate: total net R over its resolved trades
     counts: np.ndarray           # per replicate: how many of its trades resolved
+    cost_sums: Optional[np.ndarray] = None    # per replicate: total cost in R over those trades
 
     def means(self) -> np.ndarray:
         with np.errstate(invalid="ignore", divide="ignore"):
             return np.where(self.counts > 0, self.sums / self.counts, np.nan)
+
+    def mean_cost(self) -> float:
+        """Average cost in R per random trade, over every replicate."""
+        if self.cost_sums is None or self.counts.sum() == 0:
+            return float("nan")
+        return float(self.cost_sums.sum() / self.counts.sum())
 
 
 def null_replicates(signals: Sequence[Signal], h1: pd.DataFrame, policy: str, cost_model,
@@ -99,7 +106,8 @@ def null_replicates(signals: Sequence[Signal], h1: pd.DataFrame, policy: str, co
         raise ValueError(f"direction must be one of {DIRECTIONS}, got {direction!r}")
     n_signals = len(signals)
     if n_signals == 0:
-        return NullResult(np.zeros(replicates), np.zeros(replicates, dtype=np.int64))
+        return NullResult(np.zeros(replicates), np.zeros(replicates, dtype=np.int64),
+                          np.zeros(replicates))
 
     arrays = Arrays.from_frame(h1)
     geo = geometry_of(signals)
@@ -121,6 +129,7 @@ def null_replicates(signals: Sequence[Signal], h1: pd.DataFrame, policy: str, co
     inv_offset = np.repeat(geo.invalidation_offset, replicates)
 
     net = np.empty(len(e))
+    cost = np.empty(len(e))
     for start in range(0, len(e), CHUNK):
         part = slice(start, start + CHUNK)
         price = arrays.close[e[part]]
@@ -130,10 +139,12 @@ def null_replicates(signals: Sequence[Signal], h1: pd.DataFrame, policy: str, co
             invalidation=price - s[part] * inv_offset[part], risk=risk[part])
         cost_r = cost_model.price_array(arrays.spread[e[part]], typical, pip_size) / risk[part]
         net[part] = r_gross - cost_r                     # NaN stays NaN: the trade was still open
+        cost[part] = cost_r
     net = net.reshape(entries.shape)
     resolved = np.isfinite(net)
     return NullResult(sums=np.where(resolved, net, 0.0).sum(axis=0),
-                      counts=resolved.sum(axis=0).astype(np.int64))
+                      counts=resolved.sum(axis=0).astype(np.int64),
+                      cost_sums=np.where(resolved, cost.reshape(entries.shape), 0.0).sum(axis=0))
 
 
 @dataclass(frozen=True)
@@ -162,8 +173,10 @@ def compare(observed_mean: float, null: NullResult) -> Comparison:
 
 def pool(nulls: Sequence[NullResult]) -> NullResult:
     """Replicate k across instruments combined: the trade-weighted null for the whole universe."""
+    have_costs = all(n.cost_sums is not None for n in nulls)
     return NullResult(sums=np.sum([n.sums for n in nulls], axis=0),
-                      counts=np.sum([n.counts for n in nulls], axis=0))
+                      counts=np.sum([n.counts for n in nulls], axis=0),
+                      cost_sums=np.sum([n.cost_sums for n in nulls], axis=0) if have_costs else None)
 
 
 def standardised_null(null: NullResult) -> Optional[np.ndarray]:

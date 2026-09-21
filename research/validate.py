@@ -61,7 +61,8 @@ def _validate_one(job: tuple) -> dict:
     except Exception as err:          # one bad instrument must not end a 68-pair run
         return {"instrument": instrument, "error": f"{type(err).__name__}: {err}"}
     return {"instrument": instrument, "trades": trades, "null_sums": null.sums,
-            "null_counts": null.counts, "data_from": h1["time"].iloc[0]}
+            "null_counts": null.counts, "null_cost_sums": null.cost_sums,
+            "data_from": h1["time"].iloc[0]}
 
 
 def per_instrument_table(outcomes: list[dict]) -> tuple[pd.DataFrame, dict[str, NullResult]]:
@@ -72,7 +73,7 @@ def per_instrument_table(outcomes: list[dict]) -> tuple[pd.DataFrame, dict[str, 
         resolved = trades[trades["outcome"] != "open"]
         if resolved.empty:
             continue
-        null = NullResult(o["null_sums"], o["null_counts"])
+        null = NullResult(o["null_sums"], o["null_counts"], o.get("null_cost_sums"))
         c = null_model.compare(float(resolved["r_net"].mean()), null)
         rows.append({"instrument": o["instrument"], "data_from": o["data_from"],
                      "n": len(resolved), "real": c.observed, "null": c.null_mean,
@@ -109,6 +110,35 @@ def format_table(table: pd.DataFrame, rows: int) -> str:
                     f"{_num(r['p_bh'], '6.3f', 6)} {_num(r['p_maxt'], '7.3f', 7)} "
                     f"{_num(r['avg_cost_r'], '6.3f', 6)}")
     return "\n".join(body)
+
+
+def decompose(resolved: pd.DataFrame, pooled_null: NullResult) -> dict:
+    """Splits real-versus-random into what entry timing did before costs and what the spread at the
+    moment of entry cost, per trade in R. "cost" is a positive amount here, subtracted from gross."""
+    real_cost = float(resolved["cost_r"].mean())
+    real_net = float(resolved["r_net"].mean())
+    null_cost = pooled_null.mean_cost()
+    null_net = float(pooled_null.sums.sum() / pooled_null.counts.sum())
+    return {"real": {"gross": real_net + real_cost, "cost": real_cost, "net": real_net},
+            "random": {"gross": null_net + null_cost, "cost": null_cost, "net": null_net}}
+
+
+def format_decomposition(d: dict) -> str:
+    def row(label, r):
+        return f"{label:18} {r['gross']:+8.3f} {-r['cost']:+8.3f} {r['net']:+8.3f}"
+    diff = {k: d["real"][k] - d["random"][k] for k in ("gross", "cost", "net")}
+    return "\n".join([
+        f"{'per trade, in R':18} {'gross':>8} {'cost':>8} {'net':>8}",
+        row("real trades", d["real"]), row("random entries", d["random"]),
+        f"{'real minus random':18} {diff['gross']:+8.3f} {-diff['cost']:+8.3f} {diff['net']:+8.3f}"])
+
+
+def entry_hours(resolved: pd.DataFrame, top: int = 4) -> str:
+    """Where the real entries fall in the day (UTC hour the entry candle opened), since a strategy
+    that funnels entries into a few hours pays for whatever those hours are like."""
+    opened = (pd.to_datetime(resolved["entry_time"], utc=True) - pd.Timedelta(hours=1)).dt.hour
+    share = opened.value_counts(normalize=True).head(top)
+    return ", ".join(f"{hour:02d}:00 {100 * v:.0f}%" for hour, v in share.items())
 
 
 def format_walk_forward(wf: walk_forward.WalkForwardResult, top_n: int) -> str:
@@ -159,6 +189,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--no-register", action="store_true")
+    parser.add_argument("--note", default="", help="A note to store with the run in the registry.")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -200,7 +231,10 @@ def main(argv: Optional[list[str]] = None) -> int:
           f"{pooled.observed:+.3f}R, random entries {pooled.null_mean:+.3f}R, excess "
           f"{pooled.excess:+.3f}R (z {pooled.z:+.1f}, p {pooled.p_value:.4f})")
     print(f"average cost per trade {resolved['cost_r'].mean():.3f}R "
-          f"(median {resolved['cost_r'].median():.3f}R)")
+          f"(median {resolved['cost_r'].median():.3f}R)\n")
+    decomposition = decompose(resolved, pooled_null)
+    print(format_decomposition(decomposition))
+    print(f"most common entry-candle opens (UTC): {entry_hours(resolved)}")
 
     alpha = args.alpha
     counts = {"raw": int((table["p"] < alpha).sum()), "bh": int((table["p_bh"] < alpha).sum()),
@@ -221,6 +255,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     results = {
         "pooled": {"trades": len(resolved), "real": pooled.observed, "null": pooled.null_mean,
                    "excess": pooled.excess, "z": pooled.z, "p": pooled.p_value},
+        "decomposition": decomposition,
         "survivors": counts, "instruments_tested": len(table),
         "walk_forward": {"selected_mean": wf.selected_mean, "all_mean": wf.all_mean,
                          "random_pick_mean": wf.random_pick_mean, "p": wf.p_value,
@@ -230,7 +265,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.no_register:
         registry.record("validation", args.strategy, args.exit, args.costs, args.start,
                         [o["instrument"] for o in done], results, slippage_pips=args.slippage_pips,
-                        extra={"null": {"replicates": args.null_replicates,
+                        note=args.note, extra={"null": {"replicates": args.null_replicates,
                                         "window_days": args.window_days,
                                         "direction": args.null_direction, "seed": args.seed}})
         history = registry.trial_counts()

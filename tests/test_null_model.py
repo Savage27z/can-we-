@@ -255,5 +255,43 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(float(null_model.geometry_of([s]).invalidation_offset[0]), 0.0025)
 
 
+class NullCostTests(unittest.TestCase):
+    def setUp(self):
+        self.frame = walk(4000, seed=21, spread=0.0001)
+        eligible = in_session_indices(self.frame)
+        self.signals = [signal_at(self.frame, e, "bullish" if i % 2 else "bearish")
+                        for i, e in enumerate(eligible[eligible < 3500][::40][:30])]
+
+    def run_null(self, cost):
+        return null_model.null_replicates(self.signals, self.frame, "touch", cost, 0.0001, 80,
+                                          seed=3, key="EUR_USD")
+
+    def test_the_average_cost_of_the_random_trades_is_tracked(self):
+        self.assertAlmostEqual(self.run_null(SpreadCost()).mean_cost(), 0.0001 / 0.0025, places=6)
+        self.assertEqual(self.run_null(NoCost()).mean_cost(), 0.0)
+
+    def test_net_is_gross_minus_cost_for_identical_random_entries(self):
+        free, costly = self.run_null(NoCost()), self.run_null(SpreadCost())
+        np.testing.assert_array_equal(free.counts, costly.counts)       # same draws, same trades
+        np.testing.assert_allclose(free.sums - costly.sums, costly.cost_sums, rtol=0, atol=1e-9)
+
+    def test_pooling_adds_the_costs_too(self):
+        a = NullResult(np.array([1.0, 2.0]), np.array([1, 2]), np.array([0.1, 0.2]))
+        b = NullResult(np.array([1.0, 1.0]), np.array([1, 1]), np.array([0.3, 0.1]))
+        pooled = null_model.pool([a, b])
+        np.testing.assert_allclose(pooled.cost_sums, [0.4, 0.3])
+        self.assertAlmostEqual(pooled.mean_cost(), 0.7 / 5)
+
+    def test_pooling_a_null_without_costs_drops_the_cost_rather_than_guessing(self):
+        a = NullResult(np.array([1.0]), np.array([1]), np.array([0.1]))
+        b = NullResult(np.array([1.0]), np.array([1]))
+        self.assertIsNone(null_model.pool([a, b]).cost_sums)
+        self.assertTrue(np.isnan(null_model.pool([a, b]).mean_cost()))
+
+    def test_an_empty_null_has_no_average_cost(self):
+        empty = null_model.null_replicates([], self.frame, "touch", NoCost(), 0.0001, 10)
+        self.assertTrue(np.isnan(empty.mean_cost()))
+
+
 if __name__ == "__main__":
     unittest.main()
