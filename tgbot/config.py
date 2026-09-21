@@ -10,13 +10,11 @@ log = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-# The pair the bot serves. It was picked because it was the one positive result in the original
-# backtest (EUR_USD +0.34R on the strategy's own scoring; GBP_USD and USD_JPY were negative).
-# The later validation (research/README.md) does not call that an edge: EUR_USD's 116 trades
-# are too few to tell from luck, and across 65 pairs the rules did not beat random entries.
-# So this is the pair the strategy was built around, not a vetted one, and the pairs that did
-# worse stay off.
-LIVE_PAIRS = ["EUR_USD"]
+# The 7 major USD pairs. The validation (research/README.md) found no edge: across 65 pairs
+# and 21 years the rules did not beat random entries, and none of these pairs' live records is
+# long enough to tell skill from luck either way. They're enabled as the most liquid, lowest-cost
+# pairs to run the rules on, not because any of them is a vetted strategy.
+LIVE_PAIRS = ["EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "USD_CAD", "AUD_USD", "NZD_USD"]
 DEFAULT_PAIR = LIVE_PAIRS[0]
 
 # How much candle history the live bot keeps/bootstraps per pair. The backtest used

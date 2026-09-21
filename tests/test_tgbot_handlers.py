@@ -72,7 +72,13 @@ class StartTests(unittest.TestCase):
         self.assertIn("FOREX STRUCTURE SCANNER", text)
         self.assertIn("<code>/analysis $EURUSD</code>", text)
         self.assertIn("• $EURUSD — Forex", text)
-        self.assertNotIn("GBPUSD", text)
+        self.assertIn("• $GBPUSD — Forex", text)
+        self.assertIn("• $USDJPY — Forex", text)
+        self.assertIn("• $USDCHF — Forex", text)
+        self.assertIn("• $USDCAD — Forex", text)
+        self.assertIn("• $AUDUSD — Forex", text)
+        self.assertIn("• $NZDUSD — Forex", text)
+        self.assertNotIn("EURGBP", text)
         self.assertIn("not financial advice", text)
         self.assertIn("Analysis, not signals", text)
 
@@ -160,18 +166,22 @@ class AnalysisTests(unittest.TestCase):
     def test_a_pair_that_is_not_enabled_is_refused(self):
         update = make_update()
         called = []
-        ctx = make_context(args=["GBPUSD"], get_report=lambda p: called.append(p) or "x")
+        ctx = make_context(args=["EURGBP"], get_report=lambda p: called.append(p) or "x")
         run(handlers.analysis(update, ctx))
         self.assertIn("isn't enabled", replies(update)[0])
         self.assertEqual(called, [])
 
     def test_the_refusal_does_not_claim_a_backtest_endorsed_the_enabled_pair(self):
         # It used to say the enabled pair "passed the backtest gate". The validation research no
-        # longer supports that (EUR_USD is positive but too few trades to tell from luck).
+        # longer supports that (no enabled pair is shown to have an edge).
         update = make_update()
-        run(handlers.analysis(update, make_context(args=["GBPUSD"])))
+        run(handlers.analysis(update, make_context(args=["EURGBP"])))
         reply = replies(update)[0]
-        self.assertEqual(reply, "GBP_USD isn't enabled. This bot covers EUR_USD only.")
+        self.assertEqual(
+            reply,
+            "EUR_GBP isn't enabled. This bot covers EUR_USD, GBP_USD, USD_JPY, USD_CHF, "
+            "USD_CAD, AUD_USD, NZD_USD only.",
+        )
         for claim in ("passed", "gate", "negative expectancy"):
             self.assertNotIn(claim, reply)
 
