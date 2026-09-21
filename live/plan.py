@@ -86,9 +86,22 @@ def _decimals(pair: str) -> int:
 
 
 def _session_hours() -> str:
-    start = min(rules.LONDON_SESSION_UTC[0], rules.NEWYORK_SESSION_UTC[0])
-    end = max(rules.LONDON_SESSION_UTC[1], rules.NEWYORK_SESSION_UTC[1])
-    return f"{start:02d}:00–{end:02d}:00 UTC"
+    """The open hours of the H1 candles that can confirm: both sessions (bounds inclusive, §5)
+    minus the rollover hours the live bot does not trade (§5 v1.7), as ranges."""
+    hours = sorted({h for lo, hi in (rules.LONDON_SESSION_UTC, rules.NEWYORK_SESSION_UTC)
+                    for h in range(lo, hi + 1)} - set(rules.NO_ENTRY_HOURS_UTC))
+    runs, start = [], hours[0]
+    for previous, hour in zip(hours, hours[1:] + [None]):
+        if hour != previous + 1:
+            runs.append(f"{start:02d}:00–{previous:02d}:00")
+            start = hour
+    return ", ".join(runs) + " UTC"
+
+
+def _rollover_note() -> str:
+    hours = ", ".join(f"{h:02d}:00" for h in rules.NO_ENTRY_HOURS_UTC)
+    return (f"If the candle that confirms it opens at {hours} UTC (it closes around the daily "
+            f"rollover, when spreads are widest) the setup is skipped.")
 
 
 def _when(iso: str) -> str:
@@ -135,7 +148,8 @@ def _block(pair: str, setup: "ActiveSetup", plan: TradePlan) -> str:
         lines = [f"🎯 TRADE PLAN — {plan.side} {pretty} · NOT ACTIVE YET"]
         lines.append(f"• Trigger: wait for an H1 candle to CLOSE {through} {price(plan.entry)}. "
                      f"Only candles opening {_session_hours()} count, and the setup lapses "
-                     f"if none does within {rules.CONFIRMATION_WINDOW_H1} H1 candles.")
+                     f"if none does within {rules.CONFIRMATION_WINDOW_H1} H1 candles. "
+                     f"{_rollover_note()}")
         entry = f"• Entry: {plan.side} at market once it closes, at about that candle's close."
         if plan.worst_entry is not None:
             entry += (f" Skip it if the close is {'above' if buy else 'below'} "

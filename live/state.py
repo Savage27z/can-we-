@@ -130,7 +130,9 @@ def _liquidity_map(market: MarketData, as_of: pd.Timestamp, current_price: float
 
 def compute_state_from_market(market: MarketData, news: Optional[NewsStatus] = None) -> LiveState:
     events = find_sweep_events(market)
-    results = [evaluate_setup(market, direction, idx) for idx, direction in events]
+    # The live bot applies the §5 (v1.7) rollover rule; the backtest default does not.
+    results = [evaluate_setup(market, direction, idx, no_entry_hours=rules.NO_ENTRY_HOURS_UTC)
+               for idx, direction in events]
     active = [r for r in results if r.outcome in OUTCOMES_PENDING]
 
     # The latest stored H1 row's `time` is its OPEN — since storage only ever

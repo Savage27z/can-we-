@@ -27,7 +27,8 @@ class MarketData:
     h1_session: pd.Series = field(repr=False)   # bool mask, per H1 candle open time
 
 
-OUTCOMES_NO_TRADE = {"no_fvg", "bias_block", "invalidated_pre_confirm", "expired", "no_target", "low_rr"}
+OUTCOMES_NO_TRADE = {"no_fvg", "bias_block", "invalidated_pre_confirm", "expired", "no_target", "low_rr",
+                     "skipped_rollover"}   # only when evaluate_setup is given no_entry_hours
 OUTCOMES_TRADED = {"win", "loss", "open"}
 # Non-terminal: the outcome isn't decided yet purely because we ran out of
 # available data before the relevant window/resolution could complete — not
@@ -101,7 +102,12 @@ def select_target(market: MarketData, direction: str, sweep_index: int,
     return min(candidates, key=lambda lvl: abs(lvl.level - entry_price))
 
 
-def evaluate_setup(market: MarketData, direction: str, sweep_index: int) -> SetupResult:
+def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
+                   no_entry_hours: tuple[int, ...] = ()) -> SetupResult:
+    """`no_entry_hours`: UTC open hours of an H1 candle that may not confirm a trade. A setup whose
+    confirming candle opens at one of them ends as "skipped_rollover": it is dropped, not left
+    waiting for a later candle, which is exactly the variant that was backtested
+    (research's SweepFvgNoRollover). Empty (the default) is the rule as originally specified."""
     h4_time = market.h4["time"]
     h4_high = market.h4["high"].to_numpy()
     h4_low = market.h4["low"].to_numpy()
@@ -160,6 +166,12 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int) -> Setu
         else:
             outcome = "pending_confirmation"
         return SetupResult(**base, outcome=outcome, fvg=fvg)
+
+    if h1_time.iloc[confirmed_index].hour in no_entry_hours:
+        return SetupResult(**base, outcome="skipped_rollover", fvg=fvg, confirm_index=confirmed_index,
+                            confirm_time=h1_time.iloc[confirmed_index] + pd.Timedelta(hours=1),
+                            entry_price=float(h1_close[confirmed_index]),
+                            h1_candles_to_confirm=confirmed_index - j0)
 
     entry_price = float(h1_close[confirmed_index])
     # The confirming candle's CLOSE is the actual confirmation instant — that's

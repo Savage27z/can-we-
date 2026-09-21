@@ -22,6 +22,12 @@ MIN_RR = 1.5
 LONDON_SESSION_UTC = (7, 16)   # [07:00, 16:00)
 NEWYORK_SESSION_UTC = (12, 21)  # [12:00, 21:00)
 
+# §5 (v1.7) rollover candle: a confirmation on the H1 candle OPENING at one of these UTC hours is
+# not traded. 21:00 closes at 22:00 UTC, around the daily New York rollover, when spreads are
+# widest. Opt-in: evaluate_setup applies it only when passed `no_entry_hours`, so the original
+# backtest and every research baseline are unchanged; the live bot passes this.
+NO_ENTRY_HOURS_UTC = (21,)
+
 # §4 daily bias lookback (number of closed daily candles compared).
 DAILY_BIAS_CANDLES = 3
 

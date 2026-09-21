@@ -1,6 +1,6 @@
 # Strategy Rules — Liquidity Sweep + FVG Reversal
 
-Version: 1.6 (DST caveat in §5)
+Version: 1.7 (rollover candle in §5, live bot only)
 Scope: mechanical, deterministic rules only. Every condition below must be evaluable as a
 pure function over OHLC(V) candle arrays and timestamps. No discretionary language.
 
@@ -28,6 +28,9 @@ pure function over OHLC(V) candle arrays and timestamps. No discretionary langua
 - v1.6: Corrected §5's description of the H4 grid, which is fixed in UTC only in summer, and
   documented the resulting summer/winter difference in the H4 session filter. No rule or
   backtest result changed.
+- v1.7: §5 gains one rule, applied by the live bot only: a confirmation on the H1 candle opening
+  at 21:00 UTC is not traded. The backtest default is unchanged (opt-in parameter), so every
+  earlier backtest and research baseline still holds. See §5 for the evidence and its limits.
 
 ---
 
@@ -295,6 +298,19 @@ unaffected. This is a real inconsistency in the rule as specified, left unchange
 backtest result stays comparable; a DST-aware session definition would be a strategy change to
 test on its own.
 
+**Rollover candle (v1.7, live bot only).** A confirmation on the H1 candle that opens at 21:00 UTC is
+not traded. That candle closes around the daily New York rollover, when spreads are widest, and about
+a quarter of the strategy's entries fell there (23% across 65 pairs; 28 of EUR_USD's 116 historical
+trades). The setup is **dropped**, not left waiting for a later candle, because dropping is the
+variant that was measured (`research.strategies.SweepFvgNoRollover`); letting it wait would be a
+different, untested rule. It is implemented as `evaluate_setup(..., no_entry_hours=
+rules.NO_ENTRY_HOURS_UTC)`, and the live layer passes it. The default is empty, so the rule as
+written above, the original backtest and all research baselines are unchanged. The rule was checked
+against the researched variant on real EUR_USD, GBP_USD, USD_JPY and AUD_USD history and yields
+exactly the same trades. **What it is worth:** across 65 pairs it lifts net expectancy from -0.426R to
+-0.310R per trade and the strategy is then indistinguishable from random entry (excess -0.021R,
+p = 0.79). It is a hygiene fix that removes a cost, not evidence of an edge.
+
 This applies to: the **sweep candle** (1.3) and the **confirmation candle** (1.8) — each must
 independently open within an active session, or that step is disqualified (sweep discarded, or
 confirmation not yet satisfied and the setup continues waiting within its expiry window per
@@ -480,6 +496,8 @@ generates, cancels or modifies a setup, bias, level, or backtest result.
   is the trigger level, the best case, since the confirming close can only be further along.
   The target is §6.1 evaluated as if the setup confirmed now at the trigger level. It is
   labelled provisional because the real target is chosen at the confirming candle's close.
+  The confirming hours it lists are the §5 hours minus the rollover candle (v1.7), and it says
+  that a setup whose confirming candle opens at 21:00 UTC is skipped.
 - **`pending_fvg`:** no entry or target exists, so only the §6.3 stop and the §3 cancel level
   are shown.
 - **Execution versus the backtest:** §6.5 scores a win or loss on H1 **closes**. A broker stop

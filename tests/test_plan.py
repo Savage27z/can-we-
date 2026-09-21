@@ -115,7 +115,9 @@ class PendingConfirmationPlanTests(unittest.TestCase):
         for expected in (
             "BUY EUR/USD · NOT ACTIVE YET",
             "wait for an H1 candle to CLOSE above 1.14600",
-            "07:00–21:00 UTC",
+            "07:00–20:00 UTC",
+            "If the candle that confirms it opens at 21:00 UTC",
+            "the setup is skipped.",
             "within 20 H1 candles",
             "BUY at market once it closes",
             "Skip it if the close is above 1.14700",

@@ -176,7 +176,9 @@ fixed and committed before any was run, and applied by code afterwards.
   statistically significant 0.012R per trade (p = 0.002, 217,443 trades) against 0.187R of
   spread, so real but worthless. Daily Bollinger reversion: -0.044R net, negative in both halves.
 - **The rollover fix helps but does not rescue sweep/FVG:** dropping 21:00 UTC entries improves it
-  from -0.426R to -0.310R and it is then indistinguishable from random entry.
+  from -0.426R to -0.310R and it is then indistinguishable from random entry. The live bot applies
+  this rule from `strategy_rules.md` v1.7 (`backtest.rules.NO_ENTRY_HOURS_UTC`, opt-in so backtests
+  are unchanged), checked to give exactly this variant's trades on real data.
 - **Pairs differ mainly in how cheap they are to trade.** Across pairs net expectancy correlates
   -0.71 to -0.98 with average cost, including for the random-entry control; gross expectancy does not.
   The walk-forward "selection works" result is mostly this.
