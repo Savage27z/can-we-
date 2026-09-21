@@ -14,7 +14,7 @@ Three stages, matching the setup's status:
 - pending_fvg: no entry exists yet, so only the stop and the cancel level are shown.
 """
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from backtest import rules
@@ -104,8 +104,13 @@ def _rollover_note() -> str:
             f"rollover, when spreads are widest) the setup is skipped.")
 
 
-def _when(iso: str) -> str:
-    return datetime.fromisoformat(iso).strftime("%a %d %b %H:%M UTC")
+def when(iso: str) -> str:
+    """A timestamp as every report shows it, in UTC: 'Wed 10 Jun 21:00 UTC'. The plan, the
+    narrated read and the plain summary all use this, so they cannot disagree."""
+    moment = datetime.fromisoformat(iso)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc)
+    return moment.strftime("%a %d %b %H:%M UTC")
 
 
 def _block(pair: str, setup: "ActiveSetup", plan: TradePlan) -> str:
@@ -128,7 +133,7 @@ def _block(pair: str, setup: "ActiveSetup", plan: TradePlan) -> str:
         lines = [f"🎯 TRADE PLAN — {plan.side} {pretty} · LIVE"]
         if setup.confirm_time and setup.confirmation_level is not None:
             lines.append(f"Confirmed by the H1 candle that closed {through} "
-                         f"{price(setup.confirmation_level)} at {_when(setup.confirm_time)}.")
+                         f"{price(setup.confirmation_level)} at {when(setup.confirm_time)}.")
         lines.append(f"• Entry: {plan.side} at market. Signal price {price(plan.entry)}.")
         if plan.worst_entry is not None:
             lines.append(f"  Skip it if you can't fill {worst_side} {price(plan.worst_entry)} "

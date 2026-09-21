@@ -299,6 +299,12 @@ class BuildApplicationTests(unittest.TestCase):
 
 
 class FallbackTextTests(unittest.TestCase):
+    def test_the_sweep_time_reads_as_a_date_not_an_iso_string(self):
+        text = fallback_text(make_state([setup("pending_confirmation",
+                                               sweep_time="2026-09-22T09:00:00+00:00")]))
+        self.assertIn("(Tue 22 Sep 09:00 UTC)", text)
+        self.assertNotIn("2026-09-22T", text)
+
     def test_no_setup(self):
         self.assertIn("No active setup", fallback_text(make_state()))
 

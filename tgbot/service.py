@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from live.chart import load_candles, render_chart
-from live.plan import SEPARATOR, plan_text
+from live.plan import SEPARATOR, plan_text, when
 from live.refresh import refresh_pair
 from live.state import LiveState, compute_current_state
 from narration.generate import narrate_state
@@ -50,7 +50,7 @@ def fallback_text(state: LiveState) -> str:
         lines.append("No active setup.")
     for s in state.active_setups:
         lines.append(f"\n{s.direction.upper()} setup — {s.status}")
-        lines.append(f"Sweep extreme {s.sweep_extreme} ({s.sweep_time})")
+        lines.append(f"Sweep extreme {s.sweep_extreme} ({when(s.sweep_time)})")
         if s.confirmation_level is not None:
             lines.append(f"Confirmation level {s.confirmation_level}")
     news = state.news

@@ -20,6 +20,9 @@ right now, and report only daily_bias, the liquidity levels, and any news items 
 (see WHAT TO WATCH).
 - If a field is null (e.g. entry_price before confirmation), omit that specific \
 detail rather than guessing or inserting a placeholder.
+- The times in the JSON ("as_of", "sweep_time", "confirm_time") are already \
+formatted for display, for example "Wed 10 Jun 21:00 UTC". Copy them exactly as \
+given: never convert, shorten, reformat, or add a year to them.
 - Keep sentences short and factual — no hype, no hedging beyond what the data \
 supports, no speculation about what price "might" do next.
 - Follow the EXACT section structure and headings below, in this order. Do not \

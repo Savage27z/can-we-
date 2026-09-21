@@ -207,5 +207,27 @@ class PlanTextTests(unittest.TestCase):
         self.assertEqual(dict(vars(s)), before)
 
 
+class WhenTests(unittest.TestCase):
+    """The one way every report writes a time."""
+
+    def test_a_utc_timestamp_reads_as_weekday_day_month_time(self):
+        from live.plan import when
+        self.assertEqual(when("2026-06-10T21:00:00+00:00"), "Wed 10 Jun 21:00 UTC")
+
+    def test_another_timezone_is_converted_to_utc_not_relabelled(self):
+        from live.plan import when
+        self.assertEqual(when("2026-06-10T23:00:00+02:00"), "Wed 10 Jun 21:00 UTC")
+        self.assertEqual(when("2026-06-10T17:00:00-04:00"), "Wed 10 Jun 21:00 UTC")
+
+    def test_a_naive_timestamp_is_taken_to_be_utc(self):
+        from live.plan import when
+        self.assertEqual(when("2026-06-10T21:00:00"), "Wed 10 Jun 21:00 UTC")
+
+    def test_the_plan_block_uses_it(self):
+        s = with_plan(make_setup("live_trade"))
+        s.confirm_time = "2026-06-12T08:00:00+00:00"
+        self.assertIn("at Fri 12 Jun 08:00 UTC.", plan_text(state_of(s)))
+
+
 if __name__ == "__main__":
     unittest.main()

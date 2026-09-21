@@ -80,6 +80,58 @@ class NarrateStateTests(unittest.TestCase):
         self.assertNotIn("plan", sent["active_setups"][0])
         self.assertIsNotNone(setup.plan)   # stripping the model's copy must not touch the state
 
+    def facts_sent_for(self, state):
+        captured = {}
+
+        def fake_chat(system_prompt, user_prompt, **kwargs):
+            captured["user_prompt"] = user_prompt
+            return "REPORT"
+
+        with patch("narration.generate.deepseek_client.chat", side_effect=fake_chat):
+            narrate_state(state)
+        return json.loads(captured["user_prompt"].split("\n\n", 1)[1])
+
+    def confirmed_state(self):
+        setup = ActiveSetup(
+            direction="bullish", status="live_trade", sweep_time="2026-06-10T21:00:00+00:00",
+            sweep_extreme=1.1526, fvg_low=1.1541, fvg_high=1.1566, confirmation_level=1.1541,
+            entry_price=1.1567, stop_price=1.1521, target_price=1.1645, rr=1.7,
+            h1_candles_to_confirm=3, confirm_time="2026-06-12T08:00:00+00:00",
+            fvg_start_time="2026-06-11T13:00:00+00:00")
+        return LiveState(pair="EUR_USD", as_of="2026-06-12T08:00:00+00:00", current_price=1.1567,
+                         daily_bias="neutral", active_setups=[setup], liquidity_buy_side=[],
+                         liquidity_sell_side=[], news=NewsStatus(status="clear"))
+
+    def test_times_reach_the_model_as_display_text_not_iso_strings(self):
+        # Given an ISO string the model copies it into the report ("...on 2026-06-10T21:00:00+00:00").
+        sent = self.facts_sent_for(self.confirmed_state())
+        self.assertEqual(sent["as_of"], "Fri 12 Jun 08:00 UTC")
+        setup = sent["active_setups"][0]
+        self.assertEqual(setup["sweep_time"], "Wed 10 Jun 21:00 UTC")
+        self.assertEqual(setup["confirm_time"], "Fri 12 Jun 08:00 UTC")
+
+    def test_a_time_that_does_not_exist_yet_stays_null(self):
+        state = self.confirmed_state()
+        state.active_setups[0].confirm_time = None
+        self.assertIsNone(self.facts_sent_for(state)["active_setups"][0]["confirm_time"])
+
+    def test_numbers_and_the_diagnostic_time_are_untouched(self):
+        setup = self.facts_sent_for(self.confirmed_state())["active_setups"][0]
+        self.assertEqual(setup["entry_price"], 1.1567)
+        self.assertEqual(setup["fvg_start_time"], "2026-06-11T13:00:00+00:00")   # never shown
+
+    def test_formatting_the_model_copy_leaves_the_state_alone(self):
+        state = self.confirmed_state()
+        self.facts_sent_for(state)
+        self.assertEqual(state.as_of, "2026-06-12T08:00:00+00:00")
+        self.assertEqual(state.active_setups[0].sweep_time, "2026-06-10T21:00:00+00:00")
+        self.assertEqual(state.active_setups[0].confirm_time, "2026-06-12T08:00:00+00:00")
+
+    def test_the_prompt_tells_the_model_to_copy_the_times_exactly(self):
+        from narration.prompt import SYSTEM_PROMPT
+        self.assertIn("already formatted for display", SYSTEM_PROMPT)
+        self.assertIn("never convert, shorten, reformat", SYSTEM_PROMPT)
+
     def test_the_prompt_no_longer_asks_for_stop_target_or_rr_lines(self):
         from narration.prompt import SYSTEM_PROMPT
         for old in (" • Invalidation:", " • Target:", " • Planned R:R:"):
