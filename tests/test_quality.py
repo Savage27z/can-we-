@@ -274,5 +274,88 @@ class RunTests(unittest.TestCase):
         self.assertIn("NO DATA: GBP_USD", summary)
 
 
+def weeks(first_sunday: str, count: int, keep_every: int = 1) -> pd.DatetimeIndex:
+    """H1 candle open times for `count` consecutive trading weeks (120 candles each,
+    Sunday 17:00 New York onward), optionally thinned to every `keep_every`th candle."""
+    start = pd.Timestamp(first_sunday + " 17:00", tz=NY)
+    pieces = []
+    for k in range(count):
+        week = pd.date_range(start + pd.DateOffset(weeks=k), periods=120, freq="1h")
+        pieces.append(week[::keep_every])
+    return pieces[0].append(pieces[1:]).tz_convert("UTC")
+
+
+def stitched(*parts) -> pd.Series:
+    return pd.Series(parts[0].append(parts[1:]))
+
+
+class MonthlyDensityTests(unittest.TestCase):
+    def test_a_complete_month_has_no_missing_share_and_a_thin_one_has_a_large_one(self):
+        # Four full weeks starting Jan 7 carry January and Feb 1-2; four half-empty weeks follow.
+        times = stitched(weeks("2024-01-07", 4), weeks("2024-02-04", 4, keep_every=2))
+        share = quality.missing_share_by_month(times, "H1")
+        self.assertEqual(share[pd.Period("2024-01")], 0.0)
+        self.assertGreater(share[pd.Period("2024-02")], 0.3)
+        self.assertLess(share[pd.Period("2024-02")], 0.6)
+
+    def test_a_series_that_is_dense_throughout_is_usable_from_its_first_candle(self):
+        times = weeks("2024-01-07", 12)
+        self.assertEqual(quality.dense_from(pd.Series(times), "H1"), times[0])
+
+    def test_a_sparse_start_pushes_the_usable_start_to_the_first_dense_month(self):
+        # Sparse through February 23, then complete weeks from February 25.
+        times = stitched(weeks("2024-01-07", 7, keep_every=8), weeks("2024-02-25", 10))
+        self.assertEqual(quality.dense_from(times, "H1"), pd.Timestamp("2024-03-01", tz="UTC"))
+
+    def test_a_sparse_patch_in_the_middle_pushes_the_start_past_it(self):
+        times = stitched(weeks("2024-01-07", 4), weeks("2024-02-04", 4, keep_every=8),
+                         weeks("2024-03-03", 8))
+        self.assertEqual(quality.dense_from(times, "H1"), pd.Timestamp("2024-03-01", tz="UTC"))
+
+    def test_a_series_still_sparse_in_its_last_month_has_no_reliable_data(self):
+        times = stitched(weeks("2024-01-07", 8), weeks("2024-03-03", 4, keep_every=8))
+        self.assertIsNone(quality.dense_from(times, "H1"))
+
+    def test_no_data_has_no_reliable_start(self):
+        self.assertIsNone(quality.dense_from(pd.Series([], dtype="datetime64[ns, UTC]"), "H1"))
+
+    def test_the_sparseness_threshold_is_a_parameter(self):
+        # February is half empty and is the last month: unusable when strict, fine when lax.
+        times = stitched(weeks("2024-01-07", 4), weeks("2024-02-04", 4, keep_every=2))
+        self.assertIsNone(quality.dense_from(times, "H1", sparse_share=0.10))
+        self.assertEqual(quality.dense_from(times, "H1", sparse_share=0.9), times.iloc[0])
+
+    def test_check_frame_reports_where_the_data_becomes_dense(self):
+        times = stitched(weeks("2024-01-07", 7, keep_every=8), weeks("2024-02-25", 10))
+        row = quality.check_frame(frame(times), "H1", "EUR_USD")
+        self.assertEqual(row["dense_from"], "2024-03-01")
+
+
+class UsableFromTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp())
+        self._orig = config.DATA_DIR
+        config.DATA_DIR = self._tmp
+        self.addCleanup(lambda: (setattr(config, "DATA_DIR", self._orig),
+                                 shutil.rmtree(self._tmp, ignore_errors=True)))
+
+    def store(self, tf, times):
+        storage.save_merged("EUR_USD", tf, frame(pd.Series(times)).to_dict("records"))
+
+    def test_it_is_the_latest_of_the_timeframes_starts(self):
+        dense = weeks("2024-01-07", 12)
+        self.store("H1", dense)
+        self.store("H4", dense[::4])
+        # Daily: complete Sunday-to-Thursday candles, but starting a month later than the others.
+        days = pd.date_range("2024-02-04 17:00", "2024-03-28 17:00", freq="1D", tz=NY)
+        days = days[quality.market_open(days)].tz_convert("UTC")
+        self.store("D", days)
+        self.assertEqual(quality.usable_from("EUR_USD"), days[0])
+
+    def test_a_missing_timeframe_means_nothing_is_usable(self):
+        self.store("H1", weeks("2024-01-07", 4))
+        self.assertIsNone(quality.usable_from("EUR_USD"))
+
+
 if __name__ == "__main__":
     unittest.main()

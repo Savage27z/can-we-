@@ -167,7 +167,8 @@ def main():
     parser.add_argument("--workers", type=int, default=1,
                         help="Pairs to fetch at the same time (3-4 is polite to the API).")
     args = parser.parse_args()
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):      # absent when output is captured or piped by a wrapper
+        sys.stdout.reconfigure(encoding="utf-8")
 
     config.require_credentials()
     pairs = instruments.names() if args.all else args.pairs

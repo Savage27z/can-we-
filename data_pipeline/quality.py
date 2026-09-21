@@ -40,6 +40,7 @@ TOLERANCE = 1e-9
 OUTLIER_RANGE_MULTIPLE = 20      # a candle this many times the recent median range
 OUTLIER_WINDOW = 200
 SPARSE_MISSING_PCT = 5.0         # more missing than this and the data is called sparse
+SPARSE_MONTH_SHARE = 0.10        # a calendar month missing more than this is too thin to use
 
 
 def _local(times) -> pd.DatetimeIndex:
@@ -68,26 +69,97 @@ def on_grid(times, timeframe: str) -> np.ndarray:
     raise ValueError(f"unknown timeframe {timeframe!r}")
 
 
-def missing_slots(times: pd.Series, timeframe: str) -> tuple[int, int, int]:
-    """(missing candles, gaps, longest gap in candles), counting only candles that
-    should exist: the weekend closure and the hours between Friday and Sunday
-    are not holes."""
+def _sorted_times(times) -> pd.Series:
+    return (pd.Series(pd.to_datetime(times, utc=True)).drop_duplicates()
+            .sort_values().reset_index(drop=True))
+
+
+def _missing_runs(times, timeframe: str) -> list[pd.DatetimeIndex]:
+    """The candles that should exist but don't, one run per gap. The weekend closure and
+    the hours between Friday and Sunday are not holes, so gaps that only span them are
+    dropped."""
     period = PERIOD[timeframe]
-    t = pd.Series(pd.to_datetime(times, utc=True)).drop_duplicates().sort_values().reset_index(drop=True)
+    t = _sorted_times(times)
+    runs = []
     if len(t) < 2:
-        return 0, 0, 0
-    missing = gaps = longest = 0
+        return runs
     for i in np.flatnonzero((t.diff() > period).to_numpy()):
         first, last = t[i - 1] + period, t[i] - period
         if first > last:
             continue
         slots = pd.date_range(first, last, freq=period)
-        n_missing = int(market_open(slots).sum())
-        if n_missing:
-            missing += n_missing
-            gaps += 1
-            longest = max(longest, n_missing)
-    return missing, gaps, longest
+        slots = slots[market_open(slots)]
+        if len(slots):
+            runs.append(slots)
+    return runs
+
+
+def missing_slots(times: pd.Series, timeframe: str) -> tuple[int, int, int]:
+    """(missing candles, gaps, longest gap in candles)."""
+    runs = _missing_runs(times, timeframe)
+    return sum(len(r) for r in runs), len(runs), max((len(r) for r in runs), default=0)
+
+
+def _months(index: pd.DatetimeIndex) -> pd.PeriodIndex:
+    return index.tz_convert("UTC").tz_localize(None).to_period("M")
+
+
+def missing_share_by_month(times, timeframe: str) -> pd.Series:
+    """For each calendar month (UTC), the share of the candles that should exist which are
+    missing."""
+    t = _sorted_times(times)
+    runs = _missing_runs(t, timeframe)
+    present = pd.Series(1, index=_months(pd.DatetimeIndex(t))).groupby(level=0).sum()
+    missing = (pd.Series(1, index=_months(runs[0].append(runs[1:]))).groupby(level=0).sum()
+               if runs else pd.Series(dtype=int))
+    both = pd.concat([missing.rename("missing"), present.rename("present")], axis=1).fillna(0)
+    return both["missing"] / (both["missing"] + both["present"])
+
+
+def dense_from(times, timeframe: str,
+               sparse_share: float = SPARSE_MONTH_SHARE) -> Optional[pd.Timestamp]:
+    """The start of the data that can be relied on: the first instant after which no
+    calendar month is missing more than `sparse_share` of its candles. If the series is
+    dense throughout that is its first candle. If its last month is still sparse there is
+    no reliable data and this returns None.
+
+    A history can begin sparse (OANDA's earliest H1 and H4 candles are ~95% missing for
+    the majors until the end of 2004), and an index-window strategy run over sparse
+    candles measures nothing real, so backtests should start where this says."""
+    t = _sorted_times(times)
+    if t.empty:
+        return None
+    share = missing_share_by_month(t, timeframe)
+    sparse = share[share > sparse_share]
+    if sparse.empty:
+        return t.iloc[0]
+    last_sparse = sparse.index.max()
+    if last_sparse >= _months(pd.DatetimeIndex([t.iloc[-1]]))[0]:
+        return None
+    return (last_sparse + 1).start_time.tz_localize("UTC")
+
+
+def usable_windows(instrument: str,
+                   timeframes: tuple[str, ...] = ("D", "H4", "H1")) -> Optional[dict[str, pd.Timestamp]]:
+    """Where each timeframe's stored history becomes dense, or None if any of them never
+    does (or has no data)."""
+    windows = {}
+    for tf in timeframes:
+        df = storage.load(instrument, tf)
+        if df.empty:
+            return None
+        begins = dense_from(df["time"], tf)
+        if begins is None:
+            return None
+        windows[tf] = begins
+    return windows
+
+
+def usable_from(instrument: str,
+                timeframes: tuple[str, ...] = ("D", "H4", "H1")) -> Optional[pd.Timestamp]:
+    """The instant from which every one of `timeframes` is dense, or None if there isn't one."""
+    windows = usable_windows(instrument, timeframes)
+    return max(windows.values()) if windows else None
 
 
 def h1_vs_h4_mismatch(h1: pd.DataFrame, h4: pd.DataFrame) -> tuple[int, int]:
@@ -138,6 +210,8 @@ def check_frame(df: pd.DataFrame, timeframe: str, instrument: str,
     missing, gaps, longest = missing_slots(t, timeframe)
     row.update(missing_candles=missing, gaps=gaps, longest_gap=longest,
                missing_pct=round(100 * missing / (missing + len(df)), 2))
+    reliable = dense_from(t, timeframe)
+    row["dense_from"] = reliable.date().isoformat() if reliable is not None else None
 
     rng = h - l
     med = rng.rolling(OUTLIER_WINDOW, min_periods=50).median()
@@ -191,6 +265,33 @@ def run(pairs: list[str], timeframes: list[str], progress=None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _usable_history_lines(checked: pd.DataFrame) -> str:
+    """Per instrument, when ALL its timeframes are dense: what a backtest can rely on."""
+    starts: dict[str, Optional[str]] = {}
+    for instrument, group in checked.groupby("instrument"):
+        dense = group["dense_from"]
+        starts[instrument] = None if dense.isna().any() else max(dense)
+    last = pd.to_datetime(checked.groupby("instrument")["last"].max(), utc=True)
+    usable = {i: s for i, s in starts.items() if s is not None}
+    years = {i: (last[i] - pd.Timestamp(s, tz="UTC")).days / 365.25 for i, s in usable.items()}
+    lines = [f"\nUSABLE HISTORY (every timeframe dense): {len(usable)} of {len(starts)} instruments"]
+    if years:
+        ordered = sorted(years.values())
+        lines.append(f"  median {ordered[len(ordered) // 2]:.1f} years; "
+                     f"{sum(1 for y in ordered if y >= 10)} have 10+ years, "
+                     f"{sum(1 for y in ordered if y < 5)} have under 5")
+    never = sorted(i for i, s in starts.items() if s is None)
+    if never:
+        lines.append(f"  no dense history at all: {', '.join(never)}")
+    short = sorted(((y, i) for i, y in years.items() if y < 5))[:8]
+    if short:
+        lines.append("  shortest: " + ", ".join(f"{i} {y:.1f}y" for y, i in short))
+    majors = [i for i in ("EUR_USD", "GBP_USD", "USD_JPY") if i in usable]
+    if majors:
+        lines.append("  " + ", ".join(f"{i} from {usable[i]}" for i in majors))
+    return "\n".join(lines)
+
+
 def summarise(report: pd.DataFrame) -> str:
     lines = [f"{report['instrument'].nunique()} instruments, {len(report)} instrument/timeframe "
              f"series, {int(report['rows'].sum()):,} candles checked"]
@@ -208,6 +309,8 @@ def summarise(report: pd.DataFrame) -> str:
     for _, r in hard.iterrows():
         detail = ", ".join(f"{k}={int(r[k])}" for k in HARD_CHECKS if r[k])
         lines.append(f"  {r['instrument']} {r['timeframe']}: {detail}")
+
+    lines.append(_usable_history_lines(checked))
 
     sparse = checked[(checked["timeframe"] == "H1") & (checked["missing_pct"] > SPARSE_MISSING_PCT)]
     lines.append(f"\nSPARSE H1 (>{SPARSE_MISSING_PCT:g}% of trading-hour candles missing): {len(sparse)}")
@@ -243,7 +346,8 @@ def main() -> None:
                         choices=list(config.TIMEFRAMES))
     parser.add_argument("--out", default=None, help="Write the full per-series report as CSV.")
     args = parser.parse_args()
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):      # absent when output is captured or piped by a wrapper
+        sys.stdout.reconfigure(encoding="utf-8")
 
     pairs = instruments.names() if args.all else args.pairs
     report = run(pairs, args.timeframes, progress=print)

@@ -122,7 +122,8 @@ def main() -> None:
                         help="Re-read the instrument list from OANDA and rewrite the catalog.")
     parser.add_argument("--list", action="store_true", help="Print the catalog.")
     args = parser.parse_args()
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):      # absent when output is captured or piped by a wrapper
+        sys.stdout.reconfigure(encoding="utf-8")
 
     if args.refresh:
         refresh_catalog()
