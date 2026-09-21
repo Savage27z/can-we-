@@ -1,4 +1,9 @@
+from telegram import LinkPreviewOptions
+
 TELEGRAM_MESSAGE_LIMIT = 4000  # Telegram's hard cap is 4096 characters
+
+# Reports carry a TradingView link; without this Telegram would unfurl it into a large card.
+NO_LINK_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 def split_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:

@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from . import config
-from .messages import split_message
+from .messages import NO_LINK_PREVIEW, split_message
 from .pairs import normalize_pair
 from .service import ReportService
 from .wording import ALERTS_LINE, not_enabled
@@ -132,4 +132,4 @@ async def analysis(update, context) -> None:
             # The report matters more than its picture: carry on with the text.
             log.exception("could not send the chart for %s", pair)
     for chunk in split_message(result.text):
-        await message.reply_text(chunk)
+        await message.reply_text(chunk, link_preview_options=NO_LINK_PREVIEW)
