@@ -1,19 +1,25 @@
 """Parquet storage for fetched candles.
 
 Layout: data/{instrument}/{timeframe}.parquet, one row per candle, columns
-[time (UTC, tz-aware), open, high, low, close, volume], sorted ascending by time
-with no duplicate timestamps. This is the file layout Phase 2's backtester reads.
+[time (UTC, tz-aware), open, high, low, close, volume, spread], sorted ascending by
+time with no duplicate timestamps. This is the file layout the backtester reads.
+
+`spread` is the closing ask minus closing bid (price units). Files written before it
+was captured lack the column; load() adds it as NaN so callers can rely on it, and
+rows fetched later fill it in.
 """
 import os
 import re
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from . import config
 
-COLUMNS = ["time", "open", "high", "low", "close", "volume"]
+PRICE_COLUMNS = ["open", "high", "low", "close", "spread"]
+COLUMNS = ["time", "open", "high", "low", "close", "volume", "spread"]
 
 # `instrument` and `timeframe` come from CLI args (fetch_historical.py's
 # --pairs, live/narration's --pair) that aren't otherwise constrained against a
@@ -37,7 +43,10 @@ def load(instrument: str, timeframe: str) -> pd.DataFrame:
     p = path_for(instrument, timeframe)
     if not p.exists():
         return pd.DataFrame(columns=COLUMNS).astype({"time": "datetime64[ns, UTC]"})
-    return pd.read_parquet(p)
+    df = pd.read_parquet(p)
+    if "spread" not in df.columns:
+        df["spread"] = np.nan
+    return df
 
 
 def save_merged(instrument: str, timeframe: str, new_rows: list[dict],
@@ -56,13 +65,17 @@ def save_merged(instrument: str, timeframe: str, new_rows: list[dict],
     if not new_df.empty:
         new_df["time"] = pd.to_datetime(new_df["time"], utc=True)
 
-    combined = pd.concat([existing, new_df], ignore_index=True)
+    combined = pd.concat([existing.reindex(columns=COLUMNS), new_df], ignore_index=True)
     if not combined.empty:
         combined = (
             combined.drop_duplicates(subset="time", keep="last")
             .sort_values("time")
             .reset_index(drop=True)
         )
+    # Old files and spread-less rows leave NaN/object columns behind; parquet needs a
+    # concrete type for each.
+    for col in PRICE_COLUMNS:
+        combined[col] = pd.to_numeric(combined[col], errors="coerce").astype("float64")
 
     p = path_for(instrument, timeframe)
     p.parent.mkdir(parents=True, exist_ok=True)

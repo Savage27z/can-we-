@@ -7,6 +7,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pandas as pd
+
 from data_pipeline import config, storage
 
 
@@ -116,6 +118,54 @@ class StorageTests(unittest.TestCase):
         leftover_tmp_files = list(instrument_dir.glob("*.tmp"))
         self.assertEqual(leftover_tmp_files, [])
         self.assertTrue((instrument_dir / "H1.parquet").exists())
+
+
+class SpreadColumnTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp())
+        self._orig_data_dir = config.DATA_DIR
+        config.DATA_DIR = self._tmp
+
+    def tearDown(self):
+        config.DATA_DIR = self._orig_data_dir
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def row(self, hour, close, **extra):
+        return {"time": pd.Timestamp(f"2024-01-01 {hour:02d}:00", tz="UTC"), "open": close,
+                "high": close, "low": close, "close": close, "volume": 1, **extra}
+
+    def test_spread_is_stored_and_reloaded(self):
+        storage.save_merged("EUR_USD", "H1", [self.row(0, 1.0, spread=0.00012)])
+        self.assertAlmostEqual(storage.load("EUR_USD", "H1").iloc[0]["spread"], 0.00012)
+
+    def test_rows_without_a_spread_are_stored_as_nan_not_dropped_or_crashed(self):
+        storage.save_merged("EUR_USD", "H1", [self.row(0, 1.0)])
+        df = storage.load("EUR_USD", "H1")
+        self.assertEqual(len(df), 1)
+        self.assertTrue(pd.isna(df.iloc[0]["spread"]))
+
+    def test_a_file_written_before_spread_existed_loads_with_a_nan_column(self):
+        path = storage.path_for("EUR_USD", "H1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([self.row(0, 1.0)]).to_parquet(path, index=False)   # no spread column
+        df = storage.load("EUR_USD", "H1")
+        self.assertIn("spread", df.columns)
+        self.assertTrue(df["spread"].isna().all())
+
+    def test_refetching_old_rows_fills_in_their_spread(self):
+        path = storage.path_for("EUR_USD", "H1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([self.row(0, 1.0), self.row(1, 1.1)]).to_parquet(path, index=False)
+        storage.save_merged("EUR_USD", "H1", [self.row(1, 1.1, spread=0.0002)])
+        df = storage.load("EUR_USD", "H1")
+        self.assertTrue(pd.isna(df.iloc[0]["spread"]))
+        self.assertAlmostEqual(df.iloc[1]["spread"], 0.0002)
+
+    def test_price_columns_are_float_even_when_every_input_was_an_int(self):
+        storage.save_merged("EUR_USD", "H1", [self.row(0, 1)])
+        df = storage.load("EUR_USD", "H1")
+        for col in storage.PRICE_COLUMNS:
+            self.assertEqual(str(df[col].dtype), "float64", col)
 
 
 if __name__ == "__main__":
