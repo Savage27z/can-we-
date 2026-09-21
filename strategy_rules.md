@@ -31,6 +31,18 @@ pure function over OHLC(V) candle arrays and timestamps. No discretionary langua
 - v1.7: §5 gains one rule, applied by the live bot only: a confirmation on the H1 candle opening
   at 21:00 UTC is not traded. The backtest default is unchanged (opt-in parameter), so every
   earlier backtest and research baseline still holds. See §5 for the evidence and its limits.
+- v1.8: Three causality fixes from an external audit. (1) §4: the newest stored Daily row is no
+  longer assumed closed; its close time is derived from its own open time, so a historical
+  setup's bias no longer changes when another day is appended. This applies everywhere, and
+  reproduces every stored backtest result (the frozen EUR_USD gate result is unchanged).
+  (2) Live only, opt-in `plan_exits`: a live trade ends when its published plan does, that is
+  the hard stop or target being touched (wicks included, stop first if both) or an invalidating
+  H1 close, instead of on H1 closes alone. (3) Live only, opt-in `h1_mitigation`: a target level
+  that completed H1 candles inside the still-forming H4 candle have already traded through is
+  not eligible (§1.6, §6.1). (2) and (3) default off, so the backtest and every research
+  baseline keep the rules as originally scored; a backtest under them would be a different
+  strategy version and has NOT been run. The live bot's signals now differ from the backtest's
+  in exactly these two ways.
 
 ---
 
