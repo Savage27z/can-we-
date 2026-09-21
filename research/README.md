@@ -23,6 +23,10 @@ python -m data_pipeline.quality --all --out data/quality_report.csv
 # 3. Backtest
 python -m research.run_backtest --pairs EUR_USD GBP_USD --exit plan --costs spread
 python -m research.run_backtest --all --workers 8 --exit plan --costs spread --out-dir data/runs/my_run
+
+# 4. Validate: is the result distinguishable from luck? (about 10 minutes for all 65 pairs)
+python -m research.validate --all --workers 11 --exit plan --costs spread --out-dir data/runs/my_validation
+python -m research.registry                                   # every run logged so far, and the trial count
 ```
 
 `--exit` is how a trade ends and `--costs` is what it costs; both matter (see below).
@@ -50,6 +54,33 @@ dense in H1, H4 and Daily.
   are open at once, and pooled results treat correlated pairs (USD crosses) as independent.
 - **DST.** OANDA aligns Daily and H4 to 17:00 New York, so the H4 session filter admits four
   candles a day in summer and three in winter (`strategy_rules.md` section 5).
+
+## How validation works
+
+`research.validate` answers three questions, and every number it prints has to survive all three.
+
+1. **Does the entry signal beat random entry?** Each real signal is replayed at random in-session
+   candles within 60 days of the real one, keeping its direction, risk, reward and invalidation
+   distance, under the same exit and cost rules (`null_model.py`). The result minus the random-entry
+   result is the `excess`: what the entry timing added, everything else held equal. The p-value is
+   the share of replays that did at least as well. This is calibrated: on 400 synthetic strategies
+   with no skill the p-values are indistinguishable from uniform, and a strategy that peeks at the
+   future gets tiny ones (`tests/test_null_model.py`).
+2. **Does it survive having looked at 65 pairs?** The p-values are corrected for testing many
+   instruments: Benjamini-Hochberg (false discovery rate), Holm (any false positive), and a
+   max-statistic correction for "the best of N" (`multiple_testing.py`).
+3. **Would choosing pairs on the past have paid?** The walk-forward test ranks pairs using only
+   trades before each two-year block, picks the top five, and scores them on the block, against
+   randomly chosen pairs (`walk_forward.py`). The strategy's rules are fixed, so pair selection is
+   the only thing fitted to data.
+
+Every saved run and validation is logged in `data/registry/runs.jsonl` with the code version, and
+the trial count (configurations and instruments looked at) is printed with each validation. A
+p-value means something different after 3 looks than after 300.
+
+The random-entry draws are independent between instruments while real pairs are correlated, which
+makes the max-t correction if anything conservative. The pooled p-value treats trades as
+independent, which overlapping trades on correlated pairs are not, so it is somewhat optimistic.
 
 ## Reproducing the original result
 
@@ -99,5 +130,5 @@ the strategy has not been distinguished from having no edge.
 
 ## Not built yet
 
-Out-of-sample and walk-forward testing, a null model (random entries), correction for the
-number of strategies and pairs tried, portfolio limits, and any order execution.
+Portfolio limits (a cap on simultaneous and correlated trades), tuning strategy parameters
+inside the walk-forward (the only strategy so far has none), and any order execution.
