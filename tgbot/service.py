@@ -28,7 +28,15 @@ def _refresh_live_history(pair: str) -> None:
 
 
 def _default_chart(state: LiveState) -> Optional[bytes]:
-    return render_chart(load_candles(state.pair), state)
+    candles = load_candles(state.pair)
+    if config.CHART_RENDERER == "tradingview":
+        try:
+            from live.chart_tv import render_chart_tv   # optional dependency: imported lazily
+            return render_chart_tv(candles, state)
+        except Exception as err:
+            log.warning("TradingView chart failed for %s, using the matplotlib chart: %s",
+                        state.pair, err)
+    return render_chart(candles, state)
 
 
 @dataclass

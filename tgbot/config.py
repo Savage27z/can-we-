@@ -23,6 +23,12 @@ DEFAULT_PAIR = LIVE_PAIRS[0]
 # fresh deployment's first download small.
 LIVE_HISTORY_YEARS = 2
 
+# Which renderer draws the chart above /analysis and alerts: "matplotlib" (default, no extra
+# dependencies) or "tradingview" (TradingView's Lightweight Charts in a headless browser: needs
+# Playwright and a Chromium/Chrome build, see requirements-tv.txt). The TradingView one falls
+# back to matplotlib on any failure.
+CHART_RENDERER = os.environ.get("CHART_RENDERER", "matplotlib").strip().lower()
+
 # A /analysis report is reused for this long, so repeated commands don't each
 # trigger an OANDA refresh plus a paid DeepSeek call.
 REPORT_CACHE_TTL = timedelta(minutes=5)
