@@ -2,6 +2,7 @@
 post-backtest revision' parameters are easy to find and tune without hunting through
 the engine code.
 """
+from data_pipeline import instruments
 
 # §1.5 / §2.3 window-counting rule: plain array-index distance, inclusive.
 FVG_FORMATION_WINDOW_H4 = 10       # §1.5
@@ -26,10 +27,16 @@ DAILY_BIAS_CANDLES = 3
 
 
 def pip_size(instrument: str) -> float:
-    """Price-per-pip for the instrument. JPY pairs quote 2 decimal places (1 pip =
-    0.01); everything else in this strategy's scope quotes 4 decimal places
-    (1 pip = 0.0001), per §3's "0.05 for JPY pairs, 0.0005 for others" (5 pips each).
+    """Price-per-pip for the instrument, from OANDA's own catalog (EUR_USD 0.0001,
+    USD_JPY 0.01). "JPY means 0.01, everything else 0.0001" holds for the majors but
+    is wrong for 4 of the 68 tradeable pairs (EUR_HUF, USD_HUF, USD_THB are 0.01;
+    HKD_JPY is 0.0001), so the catalog is authoritative. An instrument missing from
+    the catalog falls back to that rule, which is §3's "0.05 for JPY pairs, 0.0005 for
+    others" (5 pips each).
     """
+    known = instruments.find(instrument)
+    if known is not None:
+        return known.pip_size
     return 0.01 if instrument.endswith("_JPY") else 0.0001
 
 
