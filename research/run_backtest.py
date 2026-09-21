@@ -142,6 +142,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     all_trades = pd.concat([o["trades"] for o in done], ignore_index=True) if done else pd.DataFrame()
     pooled = scoring.summarize(all_trades) if len(all_trades) else None
+    if pooled:
+        # A running total over overlapping trades on many unrelated instruments is not an
+        # equity curve anyone would experience, so its drawdown means nothing.
+        pooled["max_dd_gross"] = pooled["max_dd_net"] = None
     if len(done) > 1 and pooled and pooled["resolved"]:
         print("\nPOOLED over all instruments (trades treated as independent):")
         print(format_table([summary_row("ALL", pooled)]))

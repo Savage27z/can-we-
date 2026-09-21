@@ -109,6 +109,18 @@ class CommandLineTests(TempStore):
                          ("sweep_fvg", "close", "none", "all"))
         self.assertEqual(record["instruments"], ["EUR_USD"])
 
+    def test_several_instruments_print_a_pooled_row_without_a_meaningless_drawdown(self):
+        for tf, df in section81_frames().items():
+            self.store("GBP_USD", tf, df)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = run_backtest.main(["--pairs", "EUR_USD", "GBP_USD", "--start", "all"])
+        self.assertEqual(code, 0)
+        pooled = [line for line in out.getvalue().splitlines() if line.startswith("ALL")]
+        self.assertEqual(len(pooled), 1)
+        self.assertTrue(pooled[0].rstrip().endswith("n/a"), pooled[0])     # max drawdown blank
+        self.assertIn("exploratory, not validated", out.getvalue())
+
     def test_an_instrument_with_no_data_is_reported_as_a_failure_and_the_exit_code_says_so(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
