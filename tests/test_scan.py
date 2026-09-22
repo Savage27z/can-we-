@@ -12,8 +12,9 @@ from tgbot.scan import pair_line, scan_text
 from tgbot.service import ReportService
 
 
-def state_for(pair, setups=None, bias="neutral", **kwargs):
-    return replace(make_state(setups, **kwargs), pair=pair, daily_bias=bias)
+def state_for(pair, setups=None, bias="neutral", recent_rejections=None, **kwargs):
+    return replace(make_state(setups, **kwargs), pair=pair, daily_bias=bias,
+                   recent_rejections=recent_rejections or [])
 
 
 class PairLineTests(unittest.TestCase):
@@ -51,6 +52,34 @@ class PairLineTests(unittest.TestCase):
         line = pair_line(state_for("EUR_USD", [setup("live_trade")]), NOW + timedelta(hours=24))
         self.assertIn("stale", line)
         self.assertNotIn("LIVE", line)
+
+    def test_no_setup_but_a_recent_rejection_explains_why(self):
+        from live.state import RecentRejection
+
+        rejection = RecentRejection(direction="bearish", sweep_time="2026-09-21T09:00:00+00:00",
+                                    outcome="skipped_rollover")
+        line = pair_line(state_for("EUR_USD", recent_rejections=[rejection]), NOW)
+        self.assertIn("no setup in play", line)
+        self.assertIn("Recently: bearish sweep", line)
+        self.assertIn("rollover candle", line)
+
+    def test_low_rr_states_the_actual_number(self):
+        from live.state import RecentRejection
+
+        rejection = RecentRejection(direction="bullish", sweep_time="2026-09-21T09:00:00+00:00",
+                                    outcome="low_rr", rr=0.83)
+        line = pair_line(state_for("EUR_USD", recent_rejections=[rejection]), NOW)
+        self.assertIn("0.83", line)
+        self.assertIn("under the", line)
+
+    def test_a_rejection_is_not_shown_when_a_setup_is_active(self):
+        from live.state import RecentRejection
+
+        rejection = RecentRejection(direction="bearish", sweep_time="2026-09-21T09:00:00+00:00",
+                                    outcome="no_fvg")
+        line = pair_line(state_for("EUR_USD", [setup("pending_fvg")],
+                                   recent_rejections=[rejection]), NOW)
+        self.assertNotIn("Recently:", line)
 
     def test_a_news_blackout_is_flagged(self):
         line = pair_line(state_for("EUR_USD", news=blackout_news()), NOW)

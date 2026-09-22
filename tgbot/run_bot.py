@@ -8,11 +8,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from data_pipeline import config as data_config
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from . import config
 from .alerts import AlertLog, alert_job
-from .handlers import analysis, help_command, scan, start, status
+from .handlers import analysis, chat_message, help_command, scan, start, status
 from .service import ReportService
 
 
@@ -65,6 +65,8 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler(["analysis", "analyze"], analysis))
+    # Anything else typed as plain text (not a command): answered by the Q&A chat layer.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_message))
 
     # One check shortly after startup (so a restart doesn't wait up to an hour),
     # then hourly just after each H1 close. The grace period stops APScheduler

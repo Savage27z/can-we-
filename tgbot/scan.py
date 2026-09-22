@@ -13,12 +13,23 @@ from typing import Union
 from backtest import rules
 from live.freshness import is_stale
 from live.plan import when
-from live.state import ActiveSetup, LiveState
+from live.state import ActiveSetup, LiveState, RecentRejection
 
 from . import config
 
 BIAS_ICONS = {"bullish": "🟢", "bearish": "🔴", "neutral": "⚪"}
 _STAGE_RANK = {"live_trade": 0, "pending_confirmation": 1, "pending_fvg": 2}
+
+# Plain-English reasons for backtest.setup's no-trade outcomes, for the "recently" line
+# /scan shows when a pair has nothing active — why the most recent sweep didn't become one.
+_REJECTION_REASONS = {
+    "no_fvg": f"no gap formed within {rules.FVG_FORMATION_WINDOW_H4} H4 candles of the sweep",
+    "bias_block": "blocked by the daily bias filter",
+    "invalidated_pre_confirm": "price closed back past the sweep before it could confirm",
+    "expired": f"no H1 close through the trigger within {rules.CONFIRMATION_WINDOW_H1} candles",
+    "no_target": "confirmed, but no liquidity target was available",
+    "skipped_rollover": "confirmed on the 21:00 UTC rollover candle, which the live bot skips",
+}
 
 ScanResult = Union[LiveState, Exception]
 
@@ -50,6 +61,15 @@ def _setup_phrase(state: LiveState, setup: ActiveSetup) -> str:
     return f"{setup.direction} sweep {when(setup.sweep_time)}, waiting for a gap to form"
 
 
+def rejection_reason(rejection: RecentRejection) -> str:
+    """Plain English for a RecentRejection's outcome code — used here and, so the chat layer
+    never has to parrot a raw code like "skipped_rollover" back at someone, by tgbot.chat too."""
+    if rejection.outcome == "low_rr":
+        rr = f" ({rejection.rr:.2f})" if rejection.rr is not None else ""
+        return f"confirmed, but reward:risk{rr} was under the {rules.MIN_RR:g} minimum"
+    return _REJECTION_REASONS.get(rejection.outcome, rejection.outcome.replace("_", " "))
+
+
 def pair_line(state: LiveState, now: datetime) -> str:
     icon = BIAS_ICONS.get(state.daily_bias, "⚪")
     head = f"{icon} {state.pair.replace('_', '/')} · {state.daily_bias}"
@@ -57,6 +77,10 @@ def pair_line(state: LiveState, now: datetime) -> str:
         return f"{head} · ⚠️ data is stale (as of {when(state.as_of)}), not reading it"
     if not state.active_setups:
         text = "no setup in play"
+        if state.recent_rejections:
+            r = state.recent_rejections[0]
+            text += (f"\n    Recently: {r.direction} sweep {when(r.sweep_time)} — "
+                     f"{rejection_reason(r)}")
     else:
         best = _most_advanced(state.active_setups)
         text = _setup_phrase(state, best)
