@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from . import config
 from .messages import NO_LINK_PREVIEW, split_message
 from .pairs import normalize_pair
+from .scan import scan_text
 from .service import ReportService
 from .wording import ALERTS_LINE, not_enabled
 
@@ -13,7 +15,8 @@ MAX_ECHOED_INPUT = 40  # keeps the "couldn't read that" reply far below Telegram
 
 HELP_TEXT = (
     "Commands:\n"
-    "/analysis [pair] — structural read (default EUR_USD)\n"
+    "/scan — where every pair stands right now, nothing to wait for\n"
+    "/analysis [pair] — full structural read and chart (default EUR_USD)\n"
     "/status — health of the hourly alert checks\n"
     "/help — this message\n\n"
     f"Enabled pairs: {', '.join(config.LIVE_PAIRS)}"
@@ -97,12 +100,30 @@ async def status(update, context) -> None:
     await update.effective_message.reply_text(status_text(health))
 
 
+async def scan(update, context) -> None:
+    if not await _authorized(update):
+        return
+    message = update.effective_message
+    service: ReportService = context.application.bot_data["service"]
+    try:
+        results = await asyncio.to_thread(service.scan)
+    except Exception:
+        log.exception("scan failed")
+        await message.reply_text("Couldn't scan the pairs right now. Try again in a few minutes.")
+        return
+    for chunk in split_message(scan_text(results, datetime.now(timezone.utc))):
+        await message.reply_text(chunk, link_preview_options=NO_LINK_PREVIEW)
+
+
 async def analysis(update, context) -> None:
     if not await _authorized(update):
         return
     message = update.effective_message
 
     raw = context.args[0] if context.args else config.DEFAULT_PAIR
+    if raw.strip().lower() in ("all", "scan"):
+        await scan(update, context)
+        return
     pair = normalize_pair(raw)
     if pair is None:
         shown = raw if len(raw) <= MAX_ECHOED_INPUT else raw[:MAX_ECHOED_INPUT] + "…"
