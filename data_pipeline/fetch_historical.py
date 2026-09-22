@@ -108,9 +108,10 @@ def _fetch_pair(pair: str, position: str, timeframes: list[str], years: int, ful
         print(f"  {pair} is not in the catalog; using the {years}y lookback")
     total = 0
     failures: list[tuple[str, str, str]] = []
+    granularities = {**config.TIMEFRAMES, **config.EXTRA_TIMEFRAMES}
     for tf_name in timeframes:
         try:
-            total += fetch_one(pair, tf_name, config.TIMEFRAMES[tf_name], years, full,
+            total += fetch_one(pair, tf_name, granularities[tf_name], years, full,
                                since=since, attempts=attempts, wait_seconds=wait_seconds,
                                sleep=sleep)
         except OandaAPIError as err:
@@ -152,7 +153,7 @@ def main():
                         help="Every instrument in the catalog (overrides --pairs).")
     parser.add_argument(
         "--timeframes", nargs="+", default=list(config.TIMEFRAMES.keys()),
-        choices=list(config.TIMEFRAMES.keys()),
+        choices=list(config.TIMEFRAMES.keys()) + list(config.EXTRA_TIMEFRAMES.keys()),
     )
     parser.add_argument("--years", type=int, default=config.DEFAULT_LOOKBACK_YEARS)
     parser.add_argument(

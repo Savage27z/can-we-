@@ -19,14 +19,20 @@ DATA_DIR = Path(os.environ.get("DATA_DIR") or PROJECT_ROOT / "data")
 # OANDA instrument codes (underscore format, e.g. "EUR_USD").
 PAIRS = ["EUR_USD", "GBP_USD", "USD_JPY"]
 
-# Maps our internal timeframe name -> OANDA granularity string.
+# Maps our internal timeframe name -> OANDA granularity string. live/refresh.py's refresh_pair
+# (called on every /analysis and every hourly alert check) iterates this dict as-is, so it must
+# hold ONLY what the live bot should fetch on every cycle — never add a timeframe here that
+# isn't meant to be pulled, for every live pair, every single refresh.
 TIMEFRAMES = {
     "D": "D",
     "H4": "H4",
     "H1": "H1",
-    # M5/M1: not used by the live swing bot (LIVE_PAIRS/TIMEFRAMES elsewhere are untouched by
-    # these) — added so the same sweep+FVG logic can be fetched and backtested on a scalp-scale
-    # timeframe pair via --timeframes M5 M1 D. See research/scalp_backtest.py.
+}
+
+# Extra timeframes fetchable on request only, e.g. `--timeframes M5 M1 D` (see
+# research/scalp_backtest.py). Deliberately NOT part of TIMEFRAMES above: the live bot's
+# refresh_pair must never fetch these on a normal cycle (M1 history is 100x+ H1's volume).
+EXTRA_TIMEFRAMES = {
     "M5": "M5",
     "M1": "M1",
 }
