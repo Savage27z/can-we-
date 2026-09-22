@@ -339,6 +339,9 @@ class BuildApplicationTests(unittest.TestCase):
         for handler in app.handlers[0]:
             commands.update(getattr(handler, "commands", ()))
         self.assertEqual(commands, {"start", "help", "status", "scan", "analysis", "analyze"})
+        from telegram.ext import MessageHandler
+
+        self.assertTrue(any(isinstance(h, MessageHandler) for h in app.handlers[0]))
         self.assertEqual(len(app.job_queue.jobs()), 2)  # startup check + hourly check
         self.assertIn("service", app.bot_data)
         self.assertIn("alert_log", app.bot_data)

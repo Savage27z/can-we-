@@ -126,6 +126,22 @@ class LiveStateTests(unittest.TestCase):
         self.assertFalse(live.plan.target_provisional)
         self.assertAlmostEqual(live.plan.entry, 1.0815)      # the confirming close, not the trigger
 
+    def test_a_rejected_sweep_appears_as_a_recent_rejection(self):
+        from tests.test_worked_examples import Section82NoFVGTest
+
+        case = Section82NoFVGTest()
+        case.setUp()
+        state = compute_state_from_market(case.market)
+        self.assertEqual(state.active_setups, [])
+        self.assertTrue(state.recent_rejections)
+        rejection = state.recent_rejections[0]
+        self.assertEqual(rejection.outcome, "no_fvg")
+        self.assertEqual(rejection.direction, "bearish")
+
+    def test_no_recent_rejections_when_the_only_sweep_is_still_pending(self):
+        state = compute_state_from_market(build_eur_usd_market_with_pending_setup())
+        self.assertEqual(state.recent_rejections, [])
+
     def test_to_dict_is_json_serializable(self):
         import json
         state = compute_state_from_market(self.market)

@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from . import config
+from .chat import answer as answer_chat
 from .messages import NO_LINK_PREVIEW, split_message
 from .pairs import normalize_pair
 from .scan import scan_text
@@ -17,6 +18,8 @@ HELP_TEXT = (
     "Commands:\n"
     "/scan — where every pair stands right now, nothing to wait for\n"
     "/analysis [pair] — full structural read and chart (default EUR_USD)\n"
+    "Or just ask in plain English, e.g. \"why is nothing live on GBP/USD\" or "
+    "\"what's the stop on the EUR/USD setup\" — answered from the same real data.\n"
     "/status — health of the hourly alert checks\n"
     "/help — this message\n\n"
     f"Enabled pairs: {', '.join(config.LIVE_PAIRS)}"
@@ -153,4 +156,32 @@ async def analysis(update, context) -> None:
             # The report matters more than its picture: carry on with the text.
             log.exception("could not send the chart for %s", pair)
     for chunk in split_message(result.text):
+        await message.reply_text(chunk, link_preview_options=NO_LINK_PREVIEW)
+
+
+async def chat_message(update, context) -> None:
+    """Any plain text that isn't a command: answered by narration/chat_prompt's strict-Q&A
+    model over the same real data /scan reads, never a fixed command."""
+    if not await _authorized(update):
+        return
+    message = update.effective_message
+    text = (message.text or "").strip()
+    if not text:
+        return
+
+    service: ReportService = context.application.bot_data["service"]
+    try:
+        results = await asyncio.to_thread(service.scan)
+        reply = await asyncio.to_thread(answer_chat, text, results)
+    except Exception:
+        log.exception("chat failed")
+        await message.reply_text(
+            "Couldn't answer that right now. Try again in a moment, or use /scan."
+        )
+        return
+
+    if not isinstance(reply, str) or not reply.strip():
+        await message.reply_text("Couldn't come up with an answer to that. Try /scan or /analysis.")
+        return
+    for chunk in split_message(reply):
         await message.reply_text(chunk, link_preview_options=NO_LINK_PREVIEW)

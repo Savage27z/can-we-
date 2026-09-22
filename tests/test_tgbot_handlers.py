@@ -9,12 +9,12 @@ from tgbot.pairs import normalize_pair
 from tgbot.service import Analysis
 
 
-def make_update(chat_id=111, edited=False):
+def make_update(chat_id=111, edited=False, text=None):
     """Mimics python-telegram-bot's Update. For a normal message `message` and
     `effective_message` are the same object; for an EDITED message Telegram sends
     `edited_message`, so `update.message` is None while `effective_message` is set."""
     message = SimpleNamespace(reply_text=AsyncMock(), reply_html=AsyncMock(),
-                              reply_photo=AsyncMock())
+                              reply_photo=AsyncMock(), text=text)
     return SimpleNamespace(
         effective_chat=SimpleNamespace(id=chat_id),
         effective_message=message,

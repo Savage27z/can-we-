@@ -8,14 +8,15 @@ is always sitting at the "not resolved yet" edge).
 Per Phase 3's scope: outputs structured data (bias, level, invalidation, target)
 only. No prose, no narration — that's Phase 4's job.
 """
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import pandas as pd
 
 from backtest import bias, rules, xtf
 from backtest.engine import find_sweep_events, load_market_data
-from backtest.setup import MarketData, OUTCOMES_PENDING, SetupResult, evaluate_setup, select_target
+from backtest.setup import (MarketData, OUTCOMES_NO_TRADE, OUTCOMES_PENDING, SetupResult,
+                            evaluate_setup, select_target)
 from news.filter import NewsStatus, check_news
 
 from .plan import TradePlan, plan_for
@@ -31,6 +32,12 @@ _LIVE_STATUS_LABELS = {
 # level, §6.1) — this is purely a wider "map" for narration/display purposes,
 # built from the same real, already-computed swing/mitigation data.
 LIQUIDITY_MAP_SIZE = 5
+
+# How far back /scan and chat explain a pair's "nothing in play" with the most recent
+# rejected sweep. Not a strategy rule — purely how far back the read-only "why nothing
+# happened" view looks; it never alters a setup's own outcome.
+REJECTION_LOOKBACK_H4 = 24    # ~4 days of H4 candles
+MAX_RECENT_REJECTIONS = 1
 
 
 @dataclass
@@ -53,6 +60,17 @@ class ActiveSetup:
 
 
 @dataclass
+class RecentRejection:
+    """A sweep that reached a final no-trade outcome recently: why /scan or chat can say
+    something more useful than "no setup in play" when nothing is currently active."""
+    direction: str
+    sweep_time: str
+    outcome: str                       # one of backtest.setup.OUTCOMES_NO_TRADE
+    rr: Optional[float] = None         # populated for "low_rr"
+    confirm_time: Optional[str] = None  # populated once the setup had confirmed (e.g. "skipped_rollover")
+
+
+@dataclass
 class LiveState:
     pair: str
     as_of: str
@@ -62,6 +80,7 @@ class LiveState:
     liquidity_buy_side: list[float]   # nearest unmitigated swing highs above price
     liquidity_sell_side: list[float]  # nearest unmitigated swing lows below price
     news: NewsStatus                  # overlay only; never alters setups, bias, or levels
+    recent_rejections: list[RecentRejection] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -129,6 +148,23 @@ def _liquidity_map(market: MarketData, as_of: pd.Timestamp, current_price: float
     return buy_side, sell_side
 
 
+def _recent_rejections(results: list[SetupResult], as_of: pd.Timestamp) -> list[RecentRejection]:
+    """The most recent sweep(s) that reached a final no-trade outcome, newest first — reusing
+    `results`, which the engine already computed for every sweep in view, not a second pass."""
+    cutoff = as_of - pd.Timedelta(hours=4 * REJECTION_LOOKBACK_H4)
+    rejected = sorted(
+        (r for r in results if r.outcome in OUTCOMES_NO_TRADE and r.sweep_time >= cutoff),
+        key=lambda r: r.sweep_time, reverse=True,
+    )
+    return [
+        RecentRejection(
+            direction=r.direction, sweep_time=r.sweep_time.isoformat(), outcome=r.outcome,
+            rr=r.rr, confirm_time=r.confirm_time.isoformat() if r.confirm_time is not None else None,
+        )
+        for r in rejected[:MAX_RECENT_REJECTIONS]
+    ]
+
+
 def compute_state_from_market(market: MarketData, news: Optional[NewsStatus] = None) -> LiveState:
     events = find_sweep_events(market)
     # The live bot applies the §5 (v1.7) rollover rule and the v1.8 plan exits / H1 target
@@ -163,6 +199,7 @@ def compute_state_from_market(market: MarketData, news: Optional[NewsStatus] = N
         liquidity_buy_side=buy_side,
         liquidity_sell_side=sell_side,
         news=news if news is not None else NewsStatus.not_checked(),
+        recent_rejections=_recent_rejections(results, as_of),
     )
 
 
