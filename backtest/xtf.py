@@ -11,9 +11,12 @@ def h1_index_at_or_after(h1_times: pd.Series, t: pd.Timestamp) -> int:
     return int(h1_times.searchsorted(t, side="left"))
 
 
-def h4_index_fully_closed_by(h4_times: pd.Series, t: pd.Timestamp, period_hours: int = 4) -> int:
-    """Last H4 index whose candle has fully closed (open + period_hours <= t) by
-    time t. Returns -1 if no H4 candle has closed yet by t.
+def h4_index_fully_closed_by(h4_times: pd.Series, t: pd.Timestamp,
+                             period: pd.Timedelta = pd.Timedelta(hours=4)) -> int:
+    """Last H4 index whose candle has fully closed (open + period <= t) by
+    time t. Returns -1 if no H4 candle has closed yet by t. `period` is the higher
+    timeframe's real candle duration, default 4h to match "H4" in the name — a caller
+    running this same lookup on a different timeframe pair passes its real duration.
     """
-    cutoff = t - pd.Timedelta(hours=period_hours)
+    cutoff = t - period
     return int(h4_times.searchsorted(cutoff, side="right")) - 1

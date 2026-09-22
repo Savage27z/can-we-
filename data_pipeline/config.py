@@ -24,6 +24,11 @@ TIMEFRAMES = {
     "D": "D",
     "H4": "H4",
     "H1": "H1",
+    # M5/M1: not used by the live swing bot (LIVE_PAIRS/TIMEFRAMES elsewhere are untouched by
+    # these) — added so the same sweep+FVG logic can be fetched and backtested on a scalp-scale
+    # timeframe pair via --timeframes M5 M1 D. See research/scalp_backtest.py.
+    "M5": "M5",
+    "M1": "M1",
 }
 
 DEFAULT_LOOKBACK_YEARS = 8
