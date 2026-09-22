@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler
 
 from . import config
 from .alerts import AlertLog, alert_job
-from .handlers import analysis, help_command, start, status
+from .handlers import analysis, help_command, scan, start, status
 from .service import ReportService
 
 
@@ -63,6 +63,7 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler(["analysis", "analyze"], analysis))
 
     # One check shortly after startup (so a restart doesn't wait up to an hour),

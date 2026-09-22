@@ -101,6 +101,10 @@ class ReportService:
         self._clock = clock
         self._chart = chart
         self._cache: dict[str, _CachedReport] = {}
+        # /scan: one refresh of every pair at a time, and its result reused briefly, so a few
+        # /scan commands in a row cost one OANDA round instead of several.
+        self._scan_lock = threading.Lock()
+        self._scan_cache: Optional[tuple[datetime, dict]] = None
         # Re-entrant: get_report holds the pair's lock and calls fresh_state, which
         # takes it again on the same thread.
         self._locks: dict[str, threading.RLock] = {}
@@ -174,6 +178,25 @@ class ReportService:
             ttl = config.REPORT_CACHE_TTL if narrated else config.FALLBACK_CACHE_TTL
             self._cache[pair] = _CachedReport(analysis=analysis, built_at=self._clock(), ttl=ttl)
             return analysis
+
+    def scan(self) -> dict:
+        """The fresh state of every enabled pair (or the exception that stopped that pair),
+        for /scan. Sequential: each pair is three OANDA requests, and the per-pair lock keeps
+        it safe beside the hourly alert job."""
+        with self._scan_lock:
+            now = self._clock()
+            if self._scan_cache is not None and now - self._scan_cache[0] < config.REPORT_CACHE_TTL:
+                return self._scan_cache[1]
+            results: dict = {}
+            for pair in config.LIVE_PAIRS:
+                try:
+                    results[pair] = self.fresh_state(pair)
+                except Exception as err:
+                    log.warning("scan could not read %s: %s", pair, err)
+                    results[pair] = err
+            if any(not isinstance(r, Exception) for r in results.values()):
+                self._scan_cache = (self._clock(), results)   # a total failure is retried at once
+            return results
 
     def get_report(self, pair: str) -> str:
         return self.get_analysis(pair).text
