@@ -85,14 +85,14 @@ def _find_fvg(market: MarketData, sweep_index: int, required_direction: str) -> 
 
 
 def _crossed_by_h1(market: MarketData, kind: str, level: float, h4_ref_index: int,
-                   through: pd.Timestamp) -> bool:
+                   through: pd.Timestamp, htf_period: pd.Timedelta) -> bool:
     """True if a completed H1 candle after the last closed H4 candle, up to `through`,
     has already traded through `level` (§1.6: a high is consumed by any later high above
     it, a low by any later low below it). Those H1 candles are known even though the H4
     candle they belong to is still forming; only what has actually happened is read."""
     h1_time = market.h1["time"]
     if h4_ref_index >= 0:
-        start = market.h4["time"].iloc[h4_ref_index] + pd.Timedelta(hours=4)
+        start = market.h4["time"].iloc[h4_ref_index] + htf_period
     else:
         start = h1_time.iloc[0]
     lo = int(h1_time.searchsorted(start, side="left"))
@@ -106,13 +106,18 @@ def _crossed_by_h1(market: MarketData, kind: str, level: float, h4_ref_index: in
 
 def select_target(market: MarketData, direction: str, sweep_index: int,
                  entry_price: float, h4_ref_index: int,
-                 h1_consumed_through: Optional[pd.Timestamp] = None) -> Optional[LiquidityLevel]:
+                 h1_consumed_through: Optional[pd.Timestamp] = None,
+                 htf_period: pd.Timedelta = pd.Timedelta(hours=4)) -> Optional[LiquidityLevel]:
     """§6.1. Public because the live plan asks the same question ("what would the
     target be at this entry?") before a trade has confirmed.
 
     Mitigation is judged on closed H4 candles. `h1_consumed_through` (opt-in, used by the
     live layer) additionally rejects a level that completed H1 candles inside the still-
-    forming H4 candle have already traded through, up to that time (audit F03)."""
+    forming H4 candle have already traded through, up to that time (audit F03).
+
+    `htf_period` is the higher timeframe's own candle duration (default 4h, matching "H4"
+    in its name); a caller running the same logic on a different timeframe pair passes its
+    real duration so "still forming" is judged correctly (see evaluate_setup)."""
     target_kind = "high" if direction == "bullish" else "low"
     candidates = [
         lvl for lvl in market.levels
@@ -122,7 +127,8 @@ def select_target(market: MarketData, direction: str, sweep_index: int,
         and lvl.unmitigated_as_of(h4_ref_index + 1)
         and ((lvl.level > entry_price) if direction == "bullish" else (lvl.level < entry_price))
         and (h1_consumed_through is None
-             or not _crossed_by_h1(market, lvl.kind, lvl.level, h4_ref_index, h1_consumed_through))
+             or not _crossed_by_h1(market, lvl.kind, lvl.level, h4_ref_index, h1_consumed_through,
+                                   htf_period))
     ]
     if not candidates:
         return None
@@ -132,7 +138,9 @@ def select_target(market: MarketData, direction: str, sweep_index: int,
 def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
                    no_entry_hours: tuple[int, ...] = (),
                    plan_exits: bool = False,
-                   h1_mitigation: bool = False) -> SetupResult:
+                   h1_mitigation: bool = False,
+                   htf_period: pd.Timedelta = pd.Timedelta(hours=4),
+                   ltf_period: pd.Timedelta = pd.Timedelta(hours=1)) -> SetupResult:
     """`no_entry_hours`: UTC open hours of an H1 candle that may not confirm a trade. A setup whose
     confirming candle opens at one of them ends as "skipped_rollover": it is dropped, not left
     waiting for a later candle, which is exactly the variant that was backtested
@@ -144,7 +152,14 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
       that fire on a touch, plus a manual close on an invalidating H1 close) instead of on H1
       closes only, so a setup whose plan has ended is no longer reported as live.
     - h1_mitigation: a target already traded through by completed H1 candles inside the
-      still-forming H4 candle is not eligible (§1.6)."""
+      still-forming H4 candle is not eligible (§1.6).
+
+    `htf_period`/`ltf_period`: the real candle duration of `market.h4`/`market.h1`, default 4h/1h
+    to match their field names exactly. Every rule and every candle-count parameter (§1.5's FVG
+    window, §2.3's confirmation window, §2.4's lookback) is unchanged by these — only the small
+    number of places that convert an OPEN time to a CLOSE time (a candle's true close is its open
+    plus its own duration) need the real value, so this same logic can run on any timeframe pair
+    without silently mistiming those instants."""
     h4_time = market.h4["time"]
     h4_high = market.h4["high"].to_numpy()
     h4_low = market.h4["low"].to_numpy()
@@ -163,7 +178,7 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
         return SetupResult(**base, outcome="no_fvg" if fvg_window_exhausted else "pending_fvg")
 
     # §2.3's reference point for the confirmation window: H4 candle (mid+1)'s close time.
-    fvg_formed_time = h4_time.iloc[fvg.mid_index + 1] + pd.Timedelta(hours=4)
+    fvg_formed_time = h4_time.iloc[fvg.mid_index + 1] + htf_period
 
     # §4: daily bias filter, evaluated as of FVG formation (last gating condition, §2.1/§2.2 step 3).
     daily_bias = bias.bias_asof(market.daily, fvg_formed_time)
@@ -206,7 +221,7 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
 
     if h1_time.iloc[confirmed_index].hour in no_entry_hours:
         return SetupResult(**base, outcome="skipped_rollover", fvg=fvg, confirm_index=confirmed_index,
-                            confirm_time=h1_time.iloc[confirmed_index] + pd.Timedelta(hours=1),
+                            confirm_time=h1_time.iloc[confirmed_index] + ltf_period,
                             entry_price=float(h1_close[confirmed_index]),
                             h1_candles_to_confirm=confirmed_index - j0)
 
@@ -217,14 +232,15 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
     # an hour too conservative, occasionally treating an already-mitigated
     # liquidity level as still tradeable (~1 in 4 confirmations, whenever the
     # true close lands exactly on an H4 boundary).
-    confirm_time = h1_time.iloc[confirmed_index] + pd.Timedelta(hours=1)
+    confirm_time = h1_time.iloc[confirmed_index] + ltf_period
     h1_candles_to_confirm = confirmed_index - j0
 
     stop_price = rules.stop_price(market.pair, direction, sweep_extreme)
 
-    h4_ref_index = xtf.h4_index_fully_closed_by(h4_time, confirm_time)
+    h4_ref_index = xtf.h4_index_fully_closed_by(h4_time, confirm_time, period=htf_period)
     target_level = select_target(market, direction, sweep_index, entry_price, h4_ref_index,
-                                 h1_consumed_through=confirm_time if h1_mitigation else None)
+                                 h1_consumed_through=confirm_time if h1_mitigation else None,
+                                 htf_period=htf_period)
     if target_level is None:
         return SetupResult(**base, outcome="no_target", fvg=fvg, confirm_index=confirmed_index,
                             confirm_time=confirm_time, entry_price=entry_price, stop_price=stop_price,
@@ -254,7 +270,7 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
         if planned is not None:
             resolve_index, reason, fill_price = planned
             outcome = "win" if reason == "target" else "loss"
-            resolve_time = h1_time.iloc[resolve_index] + pd.Timedelta(hours=1)
+            resolve_time = h1_time.iloc[resolve_index] + ltf_period
     else:
         resolution = resolve_on_closes(direction, h1_close, confirmed_index + 1,
                                        sweep_extreme, target_price)
@@ -262,7 +278,7 @@ def evaluate_setup(market: MarketData, direction: str, sweep_index: int,
             resolve_index, reason = resolution
             outcome = "loss" if reason == "invalidation" else "win"
             # close time, not open (see confirm_time above)
-            resolve_time = h1_time.iloc[resolve_index] + pd.Timedelta(hours=1)
+            resolve_time = h1_time.iloc[resolve_index] + ltf_period
 
     if fill_price is not None and r_price > 0:
         signed = (fill_price - entry_price) if direction == "bullish" else (entry_price - fill_price)
